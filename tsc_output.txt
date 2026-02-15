@@ -1,0 +1,1 @@
+﻿src/navigation/MainTabs.tsx(50,89): error TS2503: Cannot find namespace 'JSX'.

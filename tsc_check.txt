@@ -1,0 +1,2 @@
+﻿src/screens/VideosScreen.tsx(291,7): error TS2322: Type '{ children: (false | Element)[]; style: { width: number; height: number; position: "relative"; }; onPress: () => void; activeScale: number; }' is not assignable to type 'IntrinsicAttributes & PressableScaleProps'.
+  Property 'activeScale' does not exist on type 'IntrinsicAttributes & PressableScaleProps'.
