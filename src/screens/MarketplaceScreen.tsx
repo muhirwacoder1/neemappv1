@@ -4,14 +4,19 @@ import {
   Dimensions,
   Image,
   LayoutAnimation,
+  Linking,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   UIManager,
   View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { createNativeStackNavigator, NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -73,6 +78,15 @@ export function MarketplaceScreen() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// MENU ITEMS
+// ══════════════════════════════════════════════════════════════════
+const MENU_ITEMS: { id: string; label: string; icon: keyof typeof Feather.glyphMap; color: string; bgColor: string; desc: string }[] = [
+  { id: 'contact', label: 'Contact Us', icon: 'phone', color: '#1E6AE1', bgColor: '#E8F0FD', desc: 'Get in touch with our support team' },
+  { id: 'faq', label: 'FAQ', icon: 'help-circle', color: '#F97316', bgColor: '#FFF7ED', desc: 'Frequently asked questions' },
+  { id: 'location', label: 'Our Location', icon: 'map-pin', color: '#22C55E', bgColor: '#F0FDF4', desc: 'Find our stores near you' },
+];
+
+// ══════════════════════════════════════════════════════════════════
 // SHARED HEADER – "NEEM Shop"
 // ══════════════════════════════════════════════════════════════════
 function ShopHeader({
@@ -86,43 +100,129 @@ function ShopHeader({
 }) {
   const { cartCount } = useCart();
   const insets = useSafeAreaInsets();
+  const [menuVisible, setMenuVisible] = useState(false);
+  const slideAnim = useRef(new Animated.Value(-SCREEN_WIDTH)).current;
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+
+  const openMenu = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setMenuVisible(true);
+    Animated.parallel([
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 65, friction: 11 }),
+      Animated.timing(backdropAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const closeMenu = () => {
+    Animated.parallel([
+      Animated.timing(slideAnim, { toValue: -SCREEN_WIDTH, duration: 250, useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(() => setMenuVisible(false));
+  };
+
+  const handleMenuItem = (id: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    closeMenu();
+    // Placeholder actions
+    // In a real app these would navigate to actual screens
+  };
 
   return (
-    <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-      {onBack ? (
-        <PressableScale onPress={onBack} style={styles.headerIconBtn}>
+    <>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <PressableScale onPress={openMenu} style={styles.headerIconBtn}>
           <Feather name="menu" size={22} color={BRAND.dark} />
         </PressableScale>
-      ) : (
-        <PressableScale style={styles.headerIconBtn}>
-          <Feather name="menu" size={22} color={BRAND.dark} />
-        </PressableScale>
-      )}
 
-      {/* NEEM Shop logo */}
-      <View style={styles.logoWrap}>
-        <View style={styles.logoBadge}>
-          <Text style={styles.logoBadgeText}>NEEM</Text>
+        {/* NEEM Shop logo */}
+        <View style={styles.logoWrap}>
+          <View style={styles.logoBadge}>
+            <Text style={styles.logoBadgeText}>NEEM</Text>
+          </View>
+          <Text style={styles.logoText}>Shop</Text>
         </View>
-        <Text style={styles.logoText}>Shop</Text>
+
+        <View style={styles.headerRight}>
+          {showSearch && (
+            <PressableScale style={styles.headerIconBtn}>
+              <Feather name="search" size={20} color={BRAND.dark} />
+            </PressableScale>
+          )}
+          <PressableScale style={styles.headerIconBtn} onPress={onCartPress}>
+            <Feather name="shopping-cart" size={20} color={BRAND.dark} />
+            {cartCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{cartCount > 9 ? '9+' : cartCount}</Text>
+              </View>
+            )}
+          </PressableScale>
+        </View>
       </View>
 
-      <View style={styles.headerRight}>
-        {showSearch && (
-          <PressableScale style={styles.headerIconBtn}>
-            <Feather name="search" size={20} color={BRAND.dark} />
-          </PressableScale>
-        )}
-        <PressableScale style={styles.headerIconBtn} onPress={onCartPress}>
-          <Feather name="shopping-cart" size={20} color={BRAND.dark} />
-          {cartCount > 0 && (
-            <View style={styles.cartBadge}>
-              <Text style={styles.cartBadgeText}>{cartCount > 9 ? '9+' : cartCount}</Text>
+      {/* ─── Hamburger Menu Modal ─────────────────── */}
+      {menuVisible && (
+        <Modal
+          visible={menuVisible}
+          transparent
+          animationType="none"
+          onRequestClose={closeMenu}
+          statusBarTranslucent
+        >
+          <Animated.View style={[styles.menuBackdrop, { opacity: backdropAnim }]}>
+            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeMenu} />
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.menuDrawer,
+              { paddingTop: insets.top + 12, transform: [{ translateX: slideAnim }] },
+            ]}
+          >
+            {/* Drawer header */}
+            <LinearGradient
+              colors={['#1E6AE1', '#1756B8']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.menuDrawerHeader}
+            >
+              <View style={styles.menuLogoRow}>
+                <View style={styles.menuLogoBadge}>
+                  <Text style={styles.menuLogoBadgeText}>NEEM</Text>
+                </View>
+                <Text style={styles.menuLogoShop}>Shop</Text>
+              </View>
+              <Text style={styles.menuDrawerTagline}>Your wellness marketplace</Text>
+            </LinearGradient>
+
+            {/* Menu items */}
+            <View style={styles.menuItems}>
+              {MENU_ITEMS.map((item) => (
+                <PressableScale
+                  key={item.id}
+                  style={styles.menuItemRow}
+                  onPress={() => handleMenuItem(item.id)}
+                >
+                  <View style={[styles.menuItemIcon, { backgroundColor: item.bgColor }]}>
+                    <Feather name={item.icon} size={18} color={item.color} />
+                  </View>
+                  <View style={styles.menuItemInfo}>
+                    <Text style={styles.menuItemLabel}>{item.label}</Text>
+                    <Text style={styles.menuItemDesc}>{item.desc}</Text>
+                  </View>
+                  <Feather name="chevron-right" size={18} color="#8E99A4" />
+                </PressableScale>
+              ))}
             </View>
-          )}
-        </PressableScale>
-      </View>
-    </View>
+
+            {/* Close button */}
+            <PressableScale style={styles.menuCloseBtn} onPress={closeMenu}>
+              <Feather name="x" size={18} color={colors.textSecondary} />
+              <Text style={styles.menuCloseBtnText}>Close</Text>
+            </PressableScale>
+          </Animated.View>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -1452,5 +1552,106 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     lineHeight: 20,
+  },
+
+  // ── Hamburger Menu Drawer ─────────────────────────────────
+  menuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(14, 27, 51, 0.5)',
+  },
+  menuDrawer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: SCREEN_WIDTH * 0.8,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#0E1B33',
+    shadowOffset: { width: 4, height: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 24,
+  },
+  menuDrawerHeader: {
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+    paddingBottom: 20,
+  },
+  menuLogoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  menuLogoBadge: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  menuLogoBadgeText: {
+    fontFamily: typography.heading,
+    fontSize: 16,
+    color: '#FFFFFF',
+  },
+  menuLogoShop: {
+    fontFamily: typography.heading,
+    fontSize: 18,
+    color: '#FFFFFF',
+  },
+  menuDrawerTagline: {
+    fontFamily: typography.body,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.8)',
+  },
+  menuItems: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    gap: 6,
+  },
+  menuItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F6F8FB',
+    borderRadius: 16,
+    padding: 14,
+  },
+  menuItemIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuItemInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  menuItemLabel: {
+    fontFamily: typography.subheading,
+    fontSize: 15,
+    color: '#0E1B33',
+  },
+  menuItemDesc: {
+    fontFamily: typography.body,
+    fontSize: 12,
+    color: '#8E99A4',
+    marginTop: 2,
+  },
+  menuCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 24,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#F1F4F9',
+  },
+  menuCloseBtnText: {
+    fontFamily: typography.subheading,
+    fontSize: 14,
+    color: '#56627A',
   },
 });

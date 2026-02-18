@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, View, Modal, Dimensions } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View, Modal, Dimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -132,10 +132,16 @@ export function HomeScreen() {
                         <Text style={styles.subGreeting}>Have a nutritious day!</Text>
                     </View>
                     <View style={styles.headerIcons}>
-                        <PressableScale style={styles.iconButton}>
-                            <Feather name="mail" size={20} color="#FFFFFF" />
+                        <PressableScale
+                            style={styles.iconButton}
+                            onPress={() => navigation.navigate('Profile')}
+                        >
+                            <Feather name="user" size={20} color="#FFFFFF" />
                         </PressableScale>
-                        <PressableScale style={styles.iconButton}>
+                        <PressableScale
+                            style={styles.iconButton}
+                            onPress={() => navigation.navigate('Notifications')}
+                        >
                             <Feather name="settings" size={20} color="#FFFFFF" />
                         </PressableScale>
                     </View>
@@ -188,6 +194,7 @@ export function HomeScreen() {
             {/* Glucose & Weight Cards */}
             <View style={styles.cardRow}>
                 <View style={styles.metricCard}>
+                    <Pressable onPress={() => navigation.navigate('HealthInsights', { metric: 'glucose' })} style={StyleSheet.absoluteFill} />
                     {/* Icon LEFT corner - bloodpressure.svg for Glucose */}
                     <View style={styles.cardIconLeft}>
                         <BloodPressureIconAlt width={48} height={48} />
@@ -206,6 +213,7 @@ export function HomeScreen() {
                 </View>
 
                 <View style={styles.metricCard}>
+                    <Pressable onPress={() => navigation.navigate('HealthInsights', { metric: 'weight' })} style={StyleSheet.absoluteFill} />
                     {/* Icon LEFT corner - green-weight.svg for Weight */}
                     <View style={styles.cardIconLeft}>
                         <GreenWeightIcon width={48} height={48} />
@@ -226,6 +234,7 @@ export function HomeScreen() {
             {/* Blood Pressure & Medication Cards */}
             <View style={styles.cardRow}>
                 <View style={styles.metricCard}>
+                    <Pressable onPress={() => navigation.navigate('HealthInsights', { metric: 'bloodpressure' })} style={StyleSheet.absoluteFill} />
                     {/* Icon LEFT corner - blood.svg for Blood Pressure */}
                     <View style={styles.cardIconLeft}>
                         <BloodIcon width={48} height={48} />
@@ -269,7 +278,7 @@ export function HomeScreen() {
             </PressableScale>
 
             {/* Log Water Card */}
-            <PressableScale style={styles.goalCard} onPress={() => setShowWaterModal(true)}>
+            <PressableScale style={styles.goalCard} onPress={() => navigation.navigate('HealthInsights', { metric: 'water' })}>
                 <View style={[styles.goalIcon, { backgroundColor: colors.goalBlueSoft }]}>
                     <WaterIcon width={24} height={24} />
                 </View>

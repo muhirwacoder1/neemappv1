@@ -30,7 +30,7 @@ export function SplashScreen({ navigation }: Props) {
     ]).start();
 
     const timeout = setTimeout(() => {
-      navigation.replace('Onboarding');
+      navigation.replace('Welcome');
     }, 1400);
 
     return () => clearTimeout(timeout);

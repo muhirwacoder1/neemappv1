@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View, ScrollView, Pressable, Dimensions } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, Pressable, Dimensions, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -10,6 +10,8 @@ import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { shadows } from '../theme/shadows';
 import { RootStackParamList, MetricType } from '../navigation/types';
+import { AddBloodPressureModal } from '../components/AddBloodPressureModal';
+import { LogHbA1cModal } from '../components/LogHbA1cModal';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type RouteProps = RouteProp<RootStackParamList, 'HealthInsights'>;
@@ -17,6 +19,7 @@ type RouteProps = RouteProp<RootStackParamList, 'HealthInsights'>;
 const screenWidth = Dimensions.get('window').width;
 
 const TABS: { id: MetricType; label: string }[] = [
+    { id: 'weight', label: 'Weight' },
     { id: 'glucose', label: 'Glucose' },
     { id: 'water', label: 'Water' },
     { id: 'activity', label: 'Activity' },
@@ -30,15 +33,24 @@ const weekDays = ['Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Mon'];
 // Mock data for each metric type
 const mockInsightsData: Record<MetricType, any> = {
     weight: {
-        chartData: [0, 0, 0, 0, 0, 250, 0],
-        maxValue: 300,
-        goal: '250 kg',
-        goalLabel: 'Weight goal',
-        insights: { average: 250, max: 250, min: 250 },
+        // Line chart points (y values over ~30 days)
+        linePoints: [90, 89.5, 89, 88.7, 88.5, 88, 87.5, 87, 86.8, 86.5, 86, 85.5, 85],
+        maxValue: 94,
+        minValue: 82,
+        targetWeight: 87,
+        startingWeight: 90,
+        currentWeight: 85,
+        progressKg: -5,
+        goal: '87 kg',
+        goalLabel: 'Target weight',
+        dateRange: 'Jan 16, 2026',
+        dateRangeEnd: 'Feb 15, 2026',
         unit: 'kg',
-        summary: 'You maintained your weight goal',
-        successDays: '7 out of 7 days',
-        history: [{ date: 'Feb 8, 11:00 AM', value: '250 kg' }],
+        history: [
+            { date: 'Today, 4:31 PM', value: '85 kg', change: '(-5 kg)' },
+            { date: 'Feb 10, 9:15 AM', value: '86 kg', change: '(-4 kg)' },
+            { date: 'Jan 28, 8:00 AM', value: '88 kg', change: '(-2 kg)' },
+        ],
     },
     glucose: {
         chartData: [0, 0, 0, 0, 0, 0, 0],
@@ -77,15 +89,22 @@ const mockInsightsData: Record<MetricType, any> = {
         history: [{ date: 'Yesterday, 11:15 PM', value: 'Animal care, household, animals' }],
     },
     hba1c: {
-        chartData: [0, 0, 0, 0, 0, 0, 0],
-        maxValue: 10,
-        goal: '< 7%',
-        goalLabel: 'HbA1c target',
-        insights: { average: '-', max: '-', min: '-' },
+        // Year-long data points (monthly)
+        linePoints: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6],
+        maxValue: 7,
+        minValue: 0,
+        targetLine: 5.7,  // normal < 5.7
         unit: '%',
-        summary: 'No HbA1c data recorded yet',
-        successDays: null,
-        history: [],
+        dateRange: 'Feb 15, 2025',
+        dateRangeEnd: 'Feb 15, 2026',
+        history: [
+            { date: '2026 Feb 15', value: '6%', whenTaken: 'Fasting', nextVisit: 'Aug 2026' },
+        ],
+        ranges: [
+            { label: 'Normal', range: 'Below 5.7%', color: '#22C55E' },
+            { label: 'Prediabetes', range: '5.7% – 6.4%', color: '#F59E0B' },
+            { label: 'Diabetes', range: '6.5% or above', color: '#EF4444' },
+        ],
     },
     bloodpressure: {
         chartData: [0, 0, 0, 0, 0, 110, 0],
@@ -203,13 +222,364 @@ function BarChart({ data, maxValue, color, goalValue }: { data: number[]; maxVal
     );
 }
 
+// Simple Line Chart for Weight
+function LineChart({ points, maxVal, minVal, targetLine }: { points: number[]; maxVal: number; minVal: number; targetLine?: number }) {
+    const chartHeight = 180;
+    const chartWidth = screenWidth - 100; // account for padding + y-axis
+    const range = maxVal - minVal || 1;
+    const yLabels = [maxVal, Math.round(maxVal - range * 0.17), Math.round(maxVal - range * 0.33), Math.round(maxVal - range * 0.5), Math.round(maxVal - range * 0.67), Math.round(maxVal - range * 0.83), minVal];
+
+    const getY = (val: number) => ((maxVal - val) / range) * chartHeight;
+    const getX = (i: number) => (i / (points.length - 1)) * chartWidth;
+
+    const targetLineY = targetLine ? getY(targetLine) : null;
+
+    return (
+        <View style={styles.chartWrapper}>
+            {/* Y-axis labels */}
+            <View style={[styles.yAxisLabels, { justifyContent: 'space-between', height: chartHeight }]}>
+                {yLabels.map((label, i) => (
+                    <Text key={i} style={styles.yAxisLabel}>{label}</Text>
+                ))}
+            </View>
+
+            {/* Chart area */}
+            <View style={[styles.chartArea, { height: chartHeight }]}>
+                {/* Grid lines */}
+                <View style={[styles.gridLines, { bottom: 0 }]}>
+                    {yLabels.map((_, i) => (
+                        <View key={i} style={styles.gridLine} />
+                    ))}
+                </View>
+
+                {/* Target line */}
+                {targetLineY !== null && (
+                    <View style={[styles.goalLine, { top: targetLineY }]}>
+                        <View style={styles.goalLineDash} />
+                    </View>
+                )}
+
+                {/* Line + dots */}
+                {points.map((val, i) => {
+                    if (i === 0) return null;
+                    const x1 = getX(i - 1);
+                    const y1 = getY(points[i - 1]);
+                    const x2 = getX(i);
+                    const y2 = getY(val);
+                    const dx = x2 - x1;
+                    const dy = y2 - y1;
+                    const len = Math.sqrt(dx * dx + dy * dy);
+                    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                    return (
+                        <View
+                            key={`line-${i}`}
+                            style={{
+                                position: 'absolute',
+                                left: x1,
+                                top: y1,
+                                width: len,
+                                height: 2,
+                                backgroundColor: '#333',
+                                transform: [{ rotate: `${angle}deg` }],
+                                transformOrigin: 'left center',
+                            }}
+                        />
+                    );
+                })}
+
+                {/* Dots */}
+                {[0, points.length - 1].map((i) => (
+                    <View
+                        key={`dot-${i}`}
+                        style={{
+                            position: 'absolute',
+                            left: getX(i) - 5,
+                            top: getY(points[i]) - 5,
+                            width: 10,
+                            height: 10,
+                            borderRadius: 5,
+                            backgroundColor: '#555',
+                        }}
+                    />
+                ))}
+            </View>
+        </View>
+    );
+}
+
+// Weight-specific content
+function WeightInsightContent({ data, periodIndex, setPeriodIndex }: { data: any; periodIndex: number; setPeriodIndex: (i: number) => void }) {
+    return (
+        <>
+            {/* Time Selector - Month / Year */}
+            <TimeSelector
+                options={['Month', 'Year']}
+                selected={periodIndex}
+                onSelect={setPeriodIndex}
+            />
+
+            {/* Date Navigation */}
+            <View style={styles.dateNavRow}>
+                <Pressable
+                    style={styles.dateArrowBtn}
+                    onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                >
+                    <Feather name="chevron-left" size={24} color={colors.textPrimary} />
+                </Pressable>
+                <Text style={styles.dateRangeText}>Jan 16 – Feb 15</Text>
+                <Pressable
+                    style={styles.dateArrowBtn}
+                    onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                >
+                    <Feather name="chevron-right" size={24} color={colors.textPrimary} />
+                </Pressable>
+            </View>
+
+            {/* Line Chart */}
+            <View style={styles.chartCard}>
+                <LineChart
+                    points={data.linePoints}
+                    maxVal={data.maxValue}
+                    minVal={data.minValue}
+                    targetLine={data.targetWeight}
+                />
+
+                {/* Date range labels */}
+                <View style={styles.weightDateRow}>
+                    <Text style={styles.weightDateLabel}>{data.dateRange}</Text>
+                    <Text style={styles.weightDateLabel}>{data.dateRangeEnd}</Text>
+                </View>
+
+                {/* Target weight */}
+                <View style={styles.goalRow}>
+                    <Text style={styles.goalLabel}>— {data.goalLabel}</Text>
+                    <Text style={styles.goalValue}>{data.goal}</Text>
+                </View>
+            </View>
+
+            {/* Weight Goal Section */}
+            <View style={styles.weightGoalCard}>
+                <Text style={styles.weightGoalTitle}>Your weight goal  (kg)</Text>
+                <View style={styles.weightGoalRow}>
+                    <View style={styles.weightGoalItem}>
+                        <Text style={styles.weightGoalNumber}>{data.startingWeight}</Text>
+                        <Text style={styles.weightGoalLabel}>Starting</Text>
+                    </View>
+                    <View style={styles.weightGoalDivider} />
+                    <View style={styles.weightGoalItem}>
+                        <Text style={styles.weightGoalNumber}>{data.currentWeight}</Text>
+                        <Text style={styles.weightGoalLabel}>Current</Text>
+                    </View>
+                    <View style={styles.weightGoalDivider} />
+                    <View style={styles.weightGoalItem}>
+                        <Text style={styles.weightGoalNumber}>{data.targetWeight}</Text>
+                        <Text style={styles.weightGoalLabel}>Target</Text>
+                    </View>
+                </View>
+                <Text style={styles.weightProgressText}>
+                    Progress toward the goal: <Text style={{ color: colors.success, fontFamily: typography.subheading }}>{data.progressKg} kg</Text>
+                </Text>
+            </View>
+
+            {/* History */}
+            <Text style={styles.sectionTitle}>History</Text>
+            <View style={styles.historyCard}>
+                {data.history.map((item: any, i: number) => (
+                    <View key={i} style={[styles.historyItem, i > 0 && styles.historyItemBorder]}>
+                        <View style={styles.historyContent}>
+                            <Text style={styles.historyDate}>{item.date}</Text>
+                            <Text style={styles.historyValue}>
+                                {item.value} • <Text style={{ color: colors.success }}>{item.change}</Text>
+                            </Text>
+                        </View>
+                    </View>
+                ))}
+            </View>
+        </>
+    );
+}
+// HbA1c-specific content
+function HbA1cInsightContent({ data }: { data: any }) {
+    const [rangesExpanded, setRangesExpanded] = useState(false);
+
+    return (
+        <>
+            {/* Year chart */}
+            <View style={styles.chartCard}>
+                <LineChart
+                    points={data.linePoints}
+                    maxVal={data.maxValue}
+                    minVal={data.minValue}
+                    targetLine={data.targetLine}
+                />
+
+                {/* Date range labels */}
+                <View style={styles.weightDateRow}>
+                    <Text style={styles.weightDateLabel}>{data.dateRange}</Text>
+                    <Text style={styles.weightDateLabel}>{data.dateRangeEnd}</Text>
+                </View>
+            </View>
+
+            {/* History */}
+            <Text style={styles.sectionTitle}>History</Text>
+            <View style={styles.historyCard}>
+                {data.history.map((item: any, i: number) => (
+                    <View key={i} style={[styles.historyItem, i > 0 && styles.historyItemBorder]}>
+                        <View style={styles.hba1cIndicator} />
+                        <View style={[styles.historyContent, { flex: 1 }]}>
+                            <Text style={styles.historyDate}>{item.date}</Text>
+                            {item.whenTaken && (
+                                <Text style={styles.hba1cMeta}>When taken: {item.whenTaken}</Text>
+                            )}
+                            {item.nextVisit && (
+                                <Text style={styles.hba1cMeta}>Next visit: {item.nextVisit}</Text>
+                            )}
+                        </View>
+                        <Text style={styles.hba1cValue}>{item.value}</Text>
+                        <Pressable style={styles.historyEditBtn}>
+                            <Feather name="edit-2" size={16} color={colors.textMuted} />
+                        </Pressable>
+                    </View>
+                ))}
+            </View>
+
+            {/* HbA1c Ranges Accordion */}
+            <Pressable
+                style={styles.rangesAccordion}
+                onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setRangesExpanded(!rangesExpanded);
+                }}
+            >
+                <Text style={styles.rangesTitle}>HbA1c ranges</Text>
+                <Feather name={rangesExpanded ? 'chevron-up' : 'chevron-down'} size={22} color={colors.textSecondary} />
+            </Pressable>
+
+            {rangesExpanded && (
+                <View style={styles.rangesContent}>
+                    {data.ranges.map((r: any, i: number) => (
+                        <View key={i} style={styles.rangeRow}>
+                            <View style={[styles.rangeDot, { backgroundColor: r.color }]} />
+                            <Text style={styles.rangeLabel}>{r.label}</Text>
+                            <Text style={styles.rangeValue}>{r.range}</Text>
+                        </View>
+                    ))}
+                </View>
+            )}
+        </>
+    );
+}
+
+// Default content for non-weight tabs
+function DefaultInsightContent({ data, activeTab, periodIndex, setPeriodIndex, getChartColor, getGoalValue }: any) {
+    return (
+        <>
+            <TimeSelector options={['Week', 'Month']} selected={periodIndex} onSelect={setPeriodIndex} />
+
+            <View style={styles.dateNavRow}>
+                <Pressable style={styles.dateArrowBtn} onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}>
+                    <Feather name="chevron-left" size={24} color={colors.textPrimary} />
+                </Pressable>
+                <Text style={styles.dateRangeText}>Feb 3 – Feb 9</Text>
+                <Pressable style={styles.dateArrowBtn} onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}>
+                    <Feather name="chevron-right" size={24} color={colors.textPrimary} />
+                </Pressable>
+            </View>
+
+            <View style={styles.chartCard}>
+                <BarChart data={data.chartData} maxValue={data.maxValue} color={getChartColor()} goalValue={getGoalValue()} />
+                <View style={styles.goalRow}>
+                    <Text style={styles.goalLabel}>— {data.goalLabel}</Text>
+                    <Text style={styles.goalValue}>{data.goal}</Text>
+                </View>
+            </View>
+
+            <View style={styles.summaryCard}>
+                <Text style={styles.summaryTitle}>Your {activeTab} insights {data.unit ? `(${data.unit})` : ''}</Text>
+                <View style={styles.summaryColumns}>
+                    {activeTab === 'water' ? (
+                        <>
+                            <View style={styles.summaryColumn}>
+                                <Text style={styles.summaryValue}>{data.insights.average}</Text>
+                                <Text style={styles.summaryLabel}>Daily average</Text>
+                            </View>
+                            <View style={styles.summaryDivider} />
+                            <View style={styles.summaryColumn}>
+                                <Text style={styles.summaryValue}>{data.insights.dailyGoal}</Text>
+                                <Text style={styles.summaryLabel}>Daily goal</Text>
+                            </View>
+                        </>
+                    ) : activeTab === 'activity' ? (
+                        <>
+                            <View style={styles.summaryColumn}>
+                                <Text style={styles.summaryValue}>{data.insights.burnedCalories}</Text>
+                                <Text style={styles.summaryLabel}>Burned calories</Text>
+                            </View>
+                            <View style={styles.summaryDivider} />
+                            <View style={styles.summaryColumn}>
+                                <Text style={styles.summaryValue}>{data.insights.activeMinutes}</Text>
+                                <Text style={styles.summaryLabel}>Active minutes</Text>
+                            </View>
+                        </>
+                    ) : (
+                        <>
+                            <View style={styles.summaryColumn}>
+                                <Text style={styles.summaryValue}>{data.insights.average}</Text>
+                                <Text style={styles.summaryLabel}>Average</Text>
+                            </View>
+                            <View style={styles.summaryDivider} />
+                            <View style={styles.summaryColumn}>
+                                <Text style={styles.summaryValue}>{data.insights.max}</Text>
+                                <Text style={styles.summaryLabel}>Max</Text>
+                            </View>
+                            <View style={styles.summaryDivider} />
+                            <View style={styles.summaryColumn}>
+                                <Text style={styles.summaryValue}>{data.insights.min}</Text>
+                                <Text style={styles.summaryLabel}>Min</Text>
+                            </View>
+                        </>
+                    )}
+                </View>
+                <Text style={styles.summaryMessage}>
+                    {data.summary}{' '}
+                    {data.successDays && <Text style={styles.successText}>{data.successDays}</Text>}
+                </Text>
+            </View>
+
+            <Text style={styles.sectionTitle}>History</Text>
+            {data.history.length === 0 ? (
+                <View style={styles.emptyHistoryCard}>
+                    <Text style={styles.emptyHistoryText}>No history yet</Text>
+                </View>
+            ) : (
+                <View style={styles.historyCard}>
+                    {data.history.map((item: any, i: number) => (
+                        <View key={i} style={[styles.historyItem, i > 0 && styles.historyItemBorder]}>
+                            <View style={styles.historyIndicator} />
+                            <View style={styles.historyContent}>
+                                <Text style={styles.historyDate}>{item.date}</Text>
+                                <Text style={styles.historyValue}>{item.value}</Text>
+                            </View>
+                            <Pressable style={styles.historyEditBtn}>
+                                <Feather name="edit-2" size={16} color={colors.textMuted} />
+                            </Pressable>
+                        </View>
+                    ))}
+                </View>
+            )}
+        </>
+    );
+}
+
 export function HealthInsightsScreen() {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<NavigationProp>();
     const route = useRoute<RouteProps>();
 
-    const [activeTab, setActiveTab] = useState<MetricType>(route.params?.metric || 'glucose');
-    const [periodIndex, setPeriodIndex] = useState(0); // 0 = Week, 1 = Month
+    const [activeTab, setActiveTab] = useState<MetricType>(route.params?.metric || 'weight');
+    const [periodIndex, setPeriodIndex] = useState(0);
+    const [showBPModal, setShowBPModal] = useState(false);
+    const [showHbA1cModal, setShowHbA1cModal] = useState(false);
 
     const data = mockInsightsData[activeTab];
 
@@ -218,8 +588,7 @@ export function HealthInsightsScreen() {
             case 'water': return colors.success;
             case 'activity': return colors.success;
             case 'glucose': return colors.primary;
-            case 'bloodpressure': return colors.warning;
-            case 'weight': return colors.success;
+            case 'weight': return '#333';
             default: return colors.primary;
         }
     };
@@ -234,7 +603,7 @@ export function HealthInsightsScreen() {
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
-            {/* Header - Clean white background */}
+            {/* Header */}
             <View style={styles.header}>
                 <Pressable
                     style={styles.backButton}
@@ -249,7 +618,7 @@ export function HealthInsightsScreen() {
                 <View style={styles.headerSpacer} />
             </View>
 
-            {/* Filter Tabs - Rounded pill buttons */}
+            {/* Filter Tabs */}
             <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -271,137 +640,48 @@ export function HealthInsightsScreen() {
                 contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
                 showsVerticalScrollIndicator={false}
             >
-                {/* Time Selector - Segmented Control */}
-                <TimeSelector
-                    options={['Week', 'Month']}
-                    selected={periodIndex}
-                    onSelect={setPeriodIndex}
-                />
-
-                {/* Date Navigation */}
-                <View style={styles.dateNavRow}>
-                    <Pressable
-                        style={styles.dateArrowBtn}
-                        onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                    >
-                        <Feather name="chevron-left" size={24} color={colors.textPrimary} />
-                    </Pressable>
-                    <Text style={styles.dateRangeText}>Feb 3 – Feb 9</Text>
-                    <Pressable
-                        style={styles.dateArrowBtn}
-                        onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                    >
-                        <Feather name="chevron-right" size={24} color={colors.textPrimary} />
-                    </Pressable>
-                </View>
-
-                {/* Chart Card - Rounded white with soft shadow */}
-                <View style={styles.chartCard}>
-                    <BarChart
-                        data={data.chartData}
-                        maxValue={data.maxValue}
-                        color={getChartColor()}
-                        goalValue={getGoalValue()}
-                    />
-
-                    {/* Goal Section */}
-                    <View style={styles.goalRow}>
-                        <Text style={styles.goalLabel}>— {data.goalLabel}</Text>
-                        <Text style={styles.goalValue}>{data.goal}</Text>
-                    </View>
-                </View>
-
-                {/* Summary Card - Two-column layout */}
-                <View style={styles.summaryCard}>
-                    <Text style={styles.summaryTitle}>
-                        Your {activeTab} insights {data.unit ? `(${data.unit})` : ''}
-                    </Text>
-
-                    <View style={styles.summaryColumns}>
-                        {activeTab === 'water' ? (
-                            <>
-                                <View style={styles.summaryColumn}>
-                                    <Text style={styles.summaryValue}>{data.insights.average}</Text>
-                                    <Text style={styles.summaryLabel}>Daily average</Text>
-                                </View>
-                                <View style={styles.summaryDivider} />
-                                <View style={styles.summaryColumn}>
-                                    <Text style={styles.summaryValue}>{data.insights.dailyGoal}</Text>
-                                    <Text style={styles.summaryLabel}>Daily goal</Text>
-                                </View>
-                            </>
-                        ) : activeTab === 'activity' ? (
-                            <>
-                                <View style={styles.summaryColumn}>
-                                    <Text style={styles.summaryValue}>{data.insights.burnedCalories}</Text>
-                                    <Text style={styles.summaryLabel}>Burned calories</Text>
-                                </View>
-                                <View style={styles.summaryDivider} />
-                                <View style={styles.summaryColumn}>
-                                    <Text style={styles.summaryValue}>{data.insights.activeMinutes}</Text>
-                                    <Text style={styles.summaryLabel}>Active minutes</Text>
-                                </View>
-                            </>
-                        ) : (
-                            <>
-                                <View style={styles.summaryColumn}>
-                                    <Text style={styles.summaryValue}>{data.insights.average}</Text>
-                                    <Text style={styles.summaryLabel}>Average</Text>
-                                </View>
-                                <View style={styles.summaryDivider} />
-                                <View style={styles.summaryColumn}>
-                                    <Text style={styles.summaryValue}>{data.insights.max}</Text>
-                                    <Text style={styles.summaryLabel}>Max</Text>
-                                </View>
-                                <View style={styles.summaryDivider} />
-                                <View style={styles.summaryColumn}>
-                                    <Text style={styles.summaryValue}>{data.insights.min}</Text>
-                                    <Text style={styles.summaryLabel}>Min</Text>
-                                </View>
-                            </>
-                        )}
-                    </View>
-
-                    <Text style={styles.summaryMessage}>
-                        {data.summary}{' '}
-                        {data.successDays && (
-                            <Text style={styles.successText}>{data.successDays}</Text>
-                        )}
-                    </Text>
-                </View>
-
-                {/* History Section */}
-                <Text style={styles.sectionTitle}>History</Text>
-
-                {data.history.length === 0 ? (
-                    <View style={styles.emptyHistoryCard}>
-                        <Text style={styles.emptyHistoryText}>No history yet</Text>
-                    </View>
+                {activeTab === 'weight' ? (
+                    <WeightInsightContent data={data} periodIndex={periodIndex} setPeriodIndex={setPeriodIndex} />
+                ) : activeTab === 'hba1c' ? (
+                    <HbA1cInsightContent data={data} />
                 ) : (
-                    <View style={styles.historyCard}>
-                        {data.history.map((item: any, i: number) => (
-                            <View key={i} style={[styles.historyItem, i > 0 && styles.historyItemBorder]}>
-                                <View style={styles.historyIndicator} />
-                                <View style={styles.historyContent}>
-                                    <Text style={styles.historyDate}>{item.date}</Text>
-                                    <Text style={styles.historyValue}>{item.value}</Text>
-                                </View>
-                                <Pressable style={styles.historyEditBtn}>
-                                    <Feather name="edit-2" size={16} color={colors.textMuted} />
-                                </Pressable>
-                            </View>
-                        ))}
-                    </View>
+                    <DefaultInsightContent
+                        data={data}
+                        activeTab={activeTab}
+                        periodIndex={periodIndex}
+                        setPeriodIndex={setPeriodIndex}
+                        getChartColor={getChartColor}
+                        getGoalValue={getGoalValue}
+                    />
                 )}
             </ScrollView>
 
-            {/* Floating Action Button */}
+            {/* FAB */}
             <Pressable
                 style={[styles.fab, { bottom: insets.bottom + 90 }]}
-                onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+                onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    if (activeTab === 'bloodpressure') {
+                        setShowBPModal(true);
+                    } else if (activeTab === 'hba1c') {
+                        setShowHbA1cModal(true);
+                    }
+                }}
             >
                 <Feather name="plus" size={28} color={colors.surface} />
             </Pressable>
+
+            {/* Blood Pressure Modal */}
+            <AddBloodPressureModal
+                visible={showBPModal}
+                onClose={() => setShowBPModal(false)}
+            />
+
+            {/* HbA1c Modal */}
+            <LogHbA1cModal
+                visible={showHbA1cModal}
+                onClose={() => setShowHbA1cModal(false)}
+            />
         </View>
     );
 }
@@ -744,5 +1024,125 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         ...shadows.card,
+    },
+
+    // Weight-specific styles
+    weightDateRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 8,
+    },
+    weightDateLabel: {
+        fontFamily: typography.body,
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    weightGoalCard: {
+        backgroundColor: colors.surfaceAlt,
+        borderRadius: 18,
+        padding: 20,
+    },
+    weightGoalTitle: {
+        fontFamily: typography.subheading,
+        fontSize: 15,
+        color: colors.textPrimary,
+        marginBottom: 16,
+    },
+    weightGoalRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-around',
+        marginBottom: 16,
+    },
+    weightGoalItem: {
+        alignItems: 'center',
+        flex: 1,
+    },
+    weightGoalNumber: {
+        fontFamily: typography.heading,
+        fontSize: 24,
+        color: colors.textPrimary,
+    },
+    weightGoalLabel: {
+        fontFamily: typography.body,
+        fontSize: 13,
+        color: colors.textSecondary,
+        marginTop: 4,
+    },
+    weightGoalDivider: {
+        width: 1,
+        height: 40,
+        backgroundColor: colors.border,
+    },
+    weightProgressText: {
+        fontFamily: typography.body,
+        fontSize: 14,
+        color: colors.textSecondary,
+        textAlign: 'center',
+    },
+
+    // HbA1c-specific styles
+    hba1cIndicator: {
+        width: 4,
+        height: 36,
+        borderRadius: 2,
+        backgroundColor: '#F59E0B',
+        marginRight: 12,
+    },
+    hba1cMeta: {
+        fontFamily: typography.body,
+        fontSize: 12,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    hba1cValue: {
+        fontFamily: typography.subheading,
+        fontSize: 16,
+        color: colors.textPrimary,
+        marginRight: 8,
+    },
+    rangesAccordion: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: colors.surface,
+        borderRadius: 16,
+        padding: 18,
+        marginTop: 12,
+        ...shadows.card,
+    },
+    rangesTitle: {
+        fontFamily: typography.subheading,
+        fontSize: 15,
+        color: colors.textPrimary,
+    },
+    rangesContent: {
+        backgroundColor: colors.surface,
+        borderRadius: 16,
+        padding: 18,
+        marginTop: 4,
+        gap: 14,
+        ...shadows.card,
+    },
+    rangeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    rangeDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        marginRight: 10,
+    },
+    rangeLabel: {
+        fontFamily: typography.subheading,
+        fontSize: 14,
+        color: colors.textPrimary,
+        flex: 1,
+    },
+    rangeValue: {
+        fontFamily: typography.body,
+        fontSize: 14,
+        color: colors.textSecondary,
     },
 });

@@ -2,6 +2,9 @@ export type MetricType = 'weight' | 'glucose' | 'water' | 'activity' | 'hba1c' |
 
 export type RootStackParamList = {
   Splash: undefined;
+  Welcome: undefined;
+  Login: undefined;
+  SignUp: undefined;
   Onboarding: undefined;
   Auth: undefined;
   Main: undefined;
@@ -15,6 +18,11 @@ export type RootStackParamList = {
   Blogs: undefined;
   BlogDetail: { postId: string };
   DoctorDetail: { doctorId: string };
+  Notifications: undefined;
+  AddReminder: { category: string; customName?: string };
+  Profile: undefined;
+  Language: undefined;
+  About: undefined;
 };
 
 export type MainTabParamList = {
