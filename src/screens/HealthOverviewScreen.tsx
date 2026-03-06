@@ -1,13 +1,23 @@
+import { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, Text, View, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
+import { Timestamp } from 'firebase/firestore';
 import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { shadows } from '../theme/shadows';
 import { RootStackParamList, MetricType } from '../navigation/types';
+import { useAuth } from '../context/AuthContext';
+import {
+    getLatestReading,
+    getTodayWaterTotal,
+    GlucoseReading,
+    WeightReading,
+    BloodPressureReading,
+} from '../services/healthData';
 
 // Import icons
 import ScaleIcon from '../../assets/icons/scale.svg';
@@ -85,6 +95,55 @@ function StatusChip({ status }: { status: 'High' | 'Normal' | 'Low' }) {
 export function HealthOverviewScreen() {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<NavigationProp>();
+    const { user } = useAuth();
+
+    // Real data from Firestore
+    const [latestGlucose, setLatestGlucose] = useState<GlucoseReading | null>(null);
+    const [latestWeight, setLatestWeight] = useState<WeightReading | null>(null);
+    const [latestBP, setLatestBP] = useState<BloodPressureReading | null>(null);
+    const [todayWater, setTodayWater] = useState(0);
+    const WATER_GOAL_ML = 1500; // 1.5L daily goal
+
+    const formatDate = (ts: Timestamp | undefined) => {
+        if (!ts) return null;
+        const d = ts.toDate();
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${months[d.getMonth()]} ${d.getDate()}th`;
+    };
+
+    const getGlucoseStatus = (value: number): 'High' | 'Normal' | 'Low' => {
+        if (value > 180) return 'High';
+        if (value < 70) return 'Low';
+        return 'Normal';
+    };
+
+    const getBPStatus = (sys: number, dia: number): 'High' | 'Normal' | 'Low' => {
+        if (sys >= 140 || dia >= 90) return 'High';
+        if (sys < 90 || dia < 60) return 'Low';
+        return 'Normal';
+    };
+
+    const fetchData = useCallback(async () => {
+        if (!user) return;
+        try {
+            const [glucose, weight, bp, water] = await Promise.all([
+                getLatestReading(user.uid, 'glucose'),
+                getLatestReading(user.uid, 'weight'),
+                getLatestReading(user.uid, 'bloodPressure'),
+                getTodayWaterTotal(user.uid),
+            ]);
+            setLatestGlucose(glucose as GlucoseReading | null);
+            setLatestWeight(weight as WeightReading | null);
+            setLatestBP(bp as BloodPressureReading | null);
+            setTodayWater(water);
+        } catch (err) {
+            console.warn('Failed to fetch health overview data:', err);
+        }
+    }, [user]);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
 
     const navigateToInsights = (metric: MetricType) => {
         navigation.navigate('HealthInsights', { metric });
@@ -117,14 +176,18 @@ export function HealthOverviewScreen() {
                 <HealthMetricCard
                     icon={<ScaleIcon width={22} height={22} color={colors.textSecondary} />}
                     title="Weight"
-                    date={healthData.weight.date}
+                    date={latestWeight ? formatDate(latestWeight.timestamp) : null}
                     onPress={() => navigateToInsights('weight')}
-                    progressBar={{ value: healthData.weight.progress, color: colors.success }}
+                    progressBar={latestWeight ? { value: 100, color: colors.success } : undefined}
                 >
                     <View style={styles.valueRow}>
-                        <Text style={styles.mainValue}>{healthData.weight.value}</Text>
-                        <Text style={styles.unitText}>{healthData.weight.unit}</Text>
-                        <Text style={styles.goalText}>· {healthData.weight.progress}% of goal</Text>
+                        <Text style={styles.mainValue}>{latestWeight ? latestWeight.kg : '—'}</Text>
+                        <Text style={styles.unitText}>kg</Text>
+                        {latestWeight ? (
+                            <Text style={styles.goalText}>· 100% of goal</Text>
+                        ) : (
+                            <Text style={styles.noDataText}>No data</Text>
+                        )}
                     </View>
                 </HealthMetricCard>
 
@@ -132,13 +195,17 @@ export function HealthOverviewScreen() {
                 <HealthMetricCard
                     icon={<BloodPressureIcon width={22} height={22} color={colors.textSecondary} />}
                     title="Glucose"
-                    date={healthData.glucose.date}
+                    date={latestGlucose ? formatDate(latestGlucose.timestamp) : null}
                     onPress={() => navigateToInsights('glucose')}
                 >
                     <View style={styles.valueRow}>
-                        <Text style={styles.mainValue}>{healthData.glucose.value}</Text>
-                        <Text style={styles.unitText}>{healthData.glucose.unit}</Text>
-                        <StatusChip status={healthData.glucose.status} />
+                        <Text style={styles.mainValue}>{latestGlucose ? latestGlucose.value : '—'}</Text>
+                        <Text style={styles.unitText}>{latestGlucose?.unit || 'mg/dL'}</Text>
+                        {latestGlucose ? (
+                            <StatusChip status={getGlucoseStatus(latestGlucose.value)} />
+                        ) : (
+                            <Text style={styles.noDataText}>No data</Text>
+                        )}
                     </View>
                 </HealthMetricCard>
 
@@ -146,14 +213,18 @@ export function HealthOverviewScreen() {
                 <HealthMetricCard
                     icon={<WaterIcon width={22} height={22} color={colors.textSecondary} />}
                     title="Water"
-                    date={healthData.water.date}
+                    date={todayWater > 0 ? 'Today' : null}
                     onPress={() => navigateToInsights('water')}
-                    progressBar={{ value: Math.min(healthData.water.goalPercent, 100), color: colors.success }}
+                    progressBar={todayWater > 0 ? { value: Math.min(Math.round((todayWater / WATER_GOAL_ML) * 100), 100), color: colors.success } : undefined}
                 >
                     <View style={styles.valueRow}>
-                        <Text style={styles.mainValue}>{healthData.water.value}</Text>
-                        <Text style={styles.unitText}>{healthData.water.unit}</Text>
-                        <Text style={styles.goalText}>· {healthData.water.goalPercent}% of goal</Text>
+                        <Text style={styles.mainValue}>{todayWater > 0 ? (todayWater / 1000).toFixed(3) : '—'}</Text>
+                        <Text style={styles.unitText}>liters</Text>
+                        {todayWater > 0 ? (
+                            <Text style={styles.goalText}>· {Math.round((todayWater / WATER_GOAL_ML) * 100)}% of goal</Text>
+                        ) : (
+                            <Text style={styles.noDataText}>No data</Text>
+                        )}
                     </View>
                 </HealthMetricCard>
 
@@ -161,13 +232,13 @@ export function HealthOverviewScreen() {
                 <HealthMetricCard
                     icon={<ActivityIcon width={22} height={22} color={colors.textSecondary} />}
                     title="Activity"
-                    date={healthData.activity.date}
+                    date={null}
                     onPress={() => navigateToInsights('activity')}
                 >
                     <View style={styles.valueRow}>
-                        <Text style={styles.mainValue}>{healthData.activity.minutes}</Text>
+                        <Text style={styles.mainValue}>—</Text>
                         <Text style={styles.unitText}>min</Text>
-                        <Text style={styles.goalText}>· {healthData.activity.calories} kcal</Text>
+                        <Text style={styles.noDataText}>No data</Text>
                     </View>
                 </HealthMetricCard>
 
@@ -175,17 +246,13 @@ export function HealthOverviewScreen() {
                 <HealthMetricCard
                     icon={<BloodIcon width={22} height={22} color={colors.textSecondary} />}
                     title="HbA1c"
-                    date={healthData.hba1c.date}
+                    date={null}
                     onPress={() => navigateToInsights('hba1c')}
                 >
                     <View style={styles.valueRow}>
-                        <Text style={styles.mainValue}>
-                            {healthData.hba1c.value !== null ? healthData.hba1c.value : '—'}
-                        </Text>
-                        <Text style={styles.unitText}>{healthData.hba1c.unit}</Text>
-                        {healthData.hba1c.value === null && (
-                            <Text style={styles.noDataText}>No data</Text>
-                        )}
+                        <Text style={styles.mainValue}>—</Text>
+                        <Text style={styles.unitText}>%</Text>
+                        <Text style={styles.noDataText}>No data</Text>
                     </View>
                 </HealthMetricCard>
 
@@ -193,15 +260,24 @@ export function HealthOverviewScreen() {
                 <HealthMetricCard
                     icon={<BloodIcon width={22} height={22} color={colors.textSecondary} />}
                     title="Blood pressure"
-                    date={healthData.bloodPressure.date}
+                    date={latestBP ? formatDate(latestBP.timestamp) : null}
                     onPress={() => navigateToInsights('bloodpressure')}
                 >
                     <View style={styles.valueRow}>
-                        <Text style={styles.mainValue}>{healthData.bloodPressure.sys}</Text>
-                        <Text style={styles.bpLabel}>SYS</Text>
-                        <Text style={styles.mainValue}>{healthData.bloodPressure.dia}</Text>
-                        <Text style={styles.bpLabel}>DIA</Text>
-                        <StatusChip status={healthData.bloodPressure.status} />
+                        {latestBP ? (
+                            <>
+                                <Text style={styles.mainValue}>{latestBP.systolic}</Text>
+                                <Text style={styles.bpLabel}>SYS</Text>
+                                <Text style={styles.mainValue}>{latestBP.diastolic}</Text>
+                                <Text style={styles.bpLabel}>DIA</Text>
+                                <StatusChip status={getBPStatus(latestBP.systolic, latestBP.diastolic)} />
+                            </>
+                        ) : (
+                            <>
+                                <Text style={styles.mainValue}>—</Text>
+                                <Text style={styles.noDataText}>No data</Text>
+                            </>
+                        )}
                     </View>
                 </HealthMetricCard>
             </ScrollView>

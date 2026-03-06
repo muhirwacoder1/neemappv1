@@ -12,6 +12,7 @@ import {
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { colors } from './src/theme/colors';
 import { CartProvider } from './src/context/CartContext';
+import { AuthProvider } from './src/context/AuthContext';
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -27,12 +28,14 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <CartProvider>
-        <NavigationContainer>
-          <StatusBar style="dark" backgroundColor={colors.background} />
-          <RootNavigator />
-        </NavigationContainer>
-      </CartProvider>
+      <AuthProvider>
+        <CartProvider>
+          <NavigationContainer>
+            <StatusBar style="dark" backgroundColor={colors.background} />
+            <RootNavigator />
+          </NavigationContainer>
+        </CartProvider>
+      </AuthProvider>
     </GestureHandlerRootView>
   );
 }

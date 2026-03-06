@@ -9,7 +9,6 @@ import {
     TouchableOpacity,
     TextInput,
     ScrollView,
-    Easing,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import Svg, { Circle, Path, Defs, ClipPath, G } from 'react-native-svg';
@@ -20,9 +19,13 @@ import { PressableScale } from './PressableScale';
 interface LogWaterModalProps {
     visible: boolean;
     onClose: () => void;
-    onSave?: (amount: number) => void;
-    dailyGoal?: number;
-    currentIntake?: number;
+    onSave?: (amountL: number) => void;
+    dailyGoalL?: number;
+    currentIntakeL?: number;
+    containerType?: 'glass' | 'bottle';
+    containerVolumeL?: number;
+    onUpdateGoal?: (goalL: number) => void;
+    onUpdateContainer?: (type: 'glass' | 'bottle', volumeL: number) => void;
 }
 
 interface CustomIntakeSheetProps {
@@ -82,8 +85,8 @@ function CustomIntakeSheet({ visible, onClose, onSave }: CustomIntakeSheetProps)
 
     const handleSave = () => {
         const numAmount = parseFloat(amount) || 0;
-        const mlAmount = unit === 'oz' ? numAmount * 29.5735 : numAmount;
-        onSave(mlAmount);
+        const litres = unit === 'ml' ? numAmount / 1000 : numAmount;
+        onSave(litres);
         onClose();
     };
 
@@ -128,7 +131,7 @@ function CustomIntakeSheet({ visible, onClose, onSave }: CustomIntakeSheetProps)
                             style={[styles.unitBtn, unit === 'oz' && styles.unitBtnActive]}
                             onPress={() => setUnit('oz')}
                         >
-                            <Text style={[styles.unitBtnText, unit === 'oz' && styles.unitBtnTextActive]}>oz</Text>
+                            <Text style={[styles.unitBtnText, unit === 'oz' && styles.unitBtnTextActive]}>L</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -143,30 +146,25 @@ function CustomIntakeSheet({ visible, onClose, onSave }: CustomIntakeSheetProps)
 
 // Animated Wave Circle with real liquid animation
 function WaterCircleWithWave({ percentage }: { percentage: number }) {
-    const wavePhase = useRef(new Animated.Value(0)).current;
-
-    useEffect(() => {
-        // Continuous wave animation loop
-        const animation = Animated.loop(
-            Animated.timing(wavePhase, {
-                toValue: 2 * Math.PI,
-                duration: 2000,
-                easing: Easing.linear,
-                useNativeDriver: false,
-            })
-        );
-        animation.start();
-        return () => animation.stop();
-    }, [wavePhase]);
-
     const [phase, setPhase] = useState(0);
+    const animRef = useRef<number | null>(null);
+    const startTimeRef = useRef(Date.now());
 
     useEffect(() => {
-        const listener = wavePhase.addListener(({ value }) => {
-            setPhase(value);
-        });
-        return () => wavePhase.removeListener(listener);
-    }, [wavePhase]);
+        startTimeRef.current = Date.now();
+
+        const animate = () => {
+            const elapsed = Date.now() - startTimeRef.current;
+            const newPhase = (elapsed / 318) % (2 * Math.PI); // ~2 second cycle
+            setPhase(newPhase);
+            animRef.current = requestAnimationFrame(animate);
+        };
+
+        animRef.current = requestAnimationFrame(animate);
+        return () => {
+            if (animRef.current) cancelAnimationFrame(animRef.current);
+        };
+    }, []);
 
     const radius = CIRCLE_SIZE / 2;
     const innerRadius = radius - 10;
@@ -285,23 +283,35 @@ export function LogWaterModal({
     visible,
     onClose,
     onSave,
-    dailyGoal = 1500,
-    currentIntake = 0,
+    dailyGoalL = 1.5,
+    currentIntakeL = 0,
+    containerType = 'glass',
+    containerVolumeL = 0.25,
+    onUpdateGoal,
+    onUpdateContainer,
 }: LogWaterModalProps) {
-    const [intake, setIntake] = useState(currentIntake);
+    const [intakeL, setIntakeL] = useState(currentIntakeL);
     const [showCustomSheet, setShowCustomSheet] = useState(false);
     const [isVisible, setIsVisible] = useState(false);
+    const [editingGoal, setEditingGoal] = useState(false);
+    const [goalInput, setGoalInput] = useState(String(dailyGoalL));
+    const [editingContainer, setEditingContainer] = useState(false);
+    const [containerInput, setContainerInput] = useState(String(containerVolumeL));
+    const [selectedContainerType, setSelectedContainerType] = useState<'glass' | 'bottle'>(containerType);
 
     const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
     const backdropAnim = useRef(new Animated.Value(0)).current;
 
-    const percentage = Math.min((intake / dailyGoal) * 100, 100);
-    const servingSize = 298.693;
+    const percentage = Math.min((intakeL / dailyGoalL) * 100, 100);
+    const servingSizeL = containerVolumeL;
 
     useEffect(() => {
         if (visible) {
             setIsVisible(true);
-            setIntake(currentIntake);
+            setIntakeL(currentIntakeL);
+            setGoalInput(String(dailyGoalL));
+            setContainerInput(String(containerVolumeL));
+            setSelectedContainerType(containerType);
             Animated.parallel([
                 Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 65, friction: 11 }),
                 Animated.timing(backdropAnim, { toValue: 1, duration: 280, useNativeDriver: true }),
@@ -312,19 +322,31 @@ export function LogWaterModal({
                 Animated.timing(backdropAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
             ]).start(() => setIsVisible(false));
         }
-    }, [visible, slideAnim, backdropAnim, currentIntake]);
+    }, [visible, slideAnim, backdropAnim, currentIntakeL, dailyGoalL, containerVolumeL, containerType]);
 
-    const addWater = () => setIntake(prev => prev + servingSize);
-    const removeWater = () => setIntake(prev => Math.max(0, prev - servingSize));
+    const addWater = () => setIntakeL(prev => prev + servingSizeL);
+    const removeWater = () => setIntakeL(prev => Math.max(0, prev - servingSizeL));
 
     const handleSave = () => {
-        onSave?.(intake);
+        onSave?.(intakeL);
         onClose();
     };
 
-    // Format values
-    const intakeDisplay = (intake / 1000).toFixed(3);
-    const goalDisplay = (dailyGoal / 1000).toFixed(1);
+    const handleSaveGoal = () => {
+        const val = parseFloat(goalInput);
+        if (val > 0) onUpdateGoal?.(val);
+        setEditingGoal(false);
+    };
+
+    const handleSaveContainer = () => {
+        const vol = parseFloat(containerInput);
+        if (vol > 0) onUpdateContainer?.(selectedContainerType, vol);
+        setEditingContainer(false);
+    };
+
+    // Format values in litres
+    const intakeDisplay = intakeL.toFixed(2);
+    const goalDisplay = dailyGoalL.toFixed(1);
     const now = new Date();
     const timeString = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
@@ -361,7 +383,7 @@ export function LogWaterModal({
                             <Text style={styles.intakeLabel}>Your intake</Text>
                             <View style={styles.intakeRow}>
                                 <Text style={styles.intakeValue}>{intakeDisplay}</Text>
-                                <Text style={styles.intakeGoal}>/ {goalDisplay} L</Text>
+                                <Text style={styles.intakeGoal}> / {goalDisplay} L</Text>
                             </View>
                         </View>
 
@@ -373,21 +395,89 @@ export function LogWaterModal({
 
                     {/* Settings */}
                     <View style={styles.settingsArea}>
-                        <TouchableOpacity style={styles.settingRow} activeOpacity={0.7}>
-                            <Text style={styles.settingLabel}>Serving size</Text>
+                        {/* Container setting */}
+                        <TouchableOpacity style={styles.settingRow} activeOpacity={0.7} onPress={() => setEditingContainer(true)}>
+                            <Text style={styles.settingLabel}>Container</Text>
                             <View style={styles.settingRight}>
-                                <Text style={styles.settingValue}>Glass {servingSize.toFixed(3)} ml</Text>
+                                <Text style={styles.settingValue}>
+                                    {containerType === 'glass' ? '🥤 Glass' : '🍶 Bottle'} {containerVolumeL} L
+                                </Text>
                                 <Feather name="chevron-right" size={18} color="#999" />
                             </View>
                         </TouchableOpacity>
+
+                        {editingContainer && (
+                            <View style={styles.editArea}>
+                                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                                    <TouchableOpacity
+                                        style={[styles.containerTypeBtn, selectedContainerType === 'glass' && styles.containerTypeBtnActive]}
+                                        onPress={() => setSelectedContainerType('glass')}
+                                    >
+                                        <Text style={[styles.containerTypeBtnText, selectedContainerType === 'glass' && styles.containerTypeBtnTextActive]}>🥤 Glass</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.containerTypeBtn, selectedContainerType === 'bottle' && styles.containerTypeBtnActive]}
+                                        onPress={() => setSelectedContainerType('bottle')}
+                                    >
+                                        <Text style={[styles.containerTypeBtnText, selectedContainerType === 'bottle' && styles.containerTypeBtnTextActive]}>🍶 Bottle</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <View style={styles.editInputRow}>
+                                    <TextInput
+                                        style={styles.editInput}
+                                        value={containerInput}
+                                        onChangeText={setContainerInput}
+                                        keyboardType="decimal-pad"
+                                        placeholder="0.25"
+                                        placeholderTextColor="#ccc"
+                                    />
+                                    <Text style={styles.editInputUnit}>L</Text>
+                                    <TouchableOpacity style={styles.editSaveBtn} onPress={handleSaveContainer}>
+                                        <Text style={styles.editSaveBtnText}>Save</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+
                         <View style={styles.settingDivider} />
-                        <TouchableOpacity style={styles.settingRow} activeOpacity={0.7}>
+
+                        {/* Daily goal setting */}
+                        <TouchableOpacity style={styles.settingRow} activeOpacity={0.7} onPress={() => setEditingGoal(true)}>
+                            <Text style={styles.settingLabel}>Daily goal</Text>
+                            <View style={styles.settingRight}>
+                                <Text style={styles.settingValue}>{dailyGoalL} L</Text>
+                                <Feather name="chevron-right" size={18} color="#999" />
+                            </View>
+                        </TouchableOpacity>
+
+                        {editingGoal && (
+                            <View style={styles.editArea}>
+                                <View style={styles.editInputRow}>
+                                    <TextInput
+                                        style={styles.editInput}
+                                        value={goalInput}
+                                        onChangeText={setGoalInput}
+                                        keyboardType="decimal-pad"
+                                        placeholder="1.5"
+                                        placeholderTextColor="#ccc"
+                                    />
+                                    <Text style={styles.editInputUnit}>L</Text>
+                                    <TouchableOpacity style={styles.editSaveBtn} onPress={handleSaveGoal}>
+                                        <Text style={styles.editSaveBtnText}>Save</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+
+                        <View style={styles.settingDivider} />
+
+                        {/* Time */}
+                        <View style={styles.settingRow}>
                             <Text style={styles.settingLabel}>Water intake time</Text>
                             <View style={styles.settingRight}>
                                 <Text style={styles.settingValue}>Today, {timeString}</Text>
-                                <Feather name="chevron-right" size={18} color="#999" />
                             </View>
-                        </TouchableOpacity>
+                        </View>
                     </View>
                 </ScrollView>
 
@@ -405,7 +495,7 @@ export function LogWaterModal({
             <CustomIntakeSheet
                 visible={showCustomSheet}
                 onClose={() => setShowCustomSheet(false)}
-                onSave={(amt) => { setIntake(prev => prev + amt); }}
+                onSave={(amtL) => { setIntakeL(prev => prev + amtL); }}
             />
         </Modal>
     );
@@ -707,5 +797,64 @@ const styles = StyleSheet.create({
         fontFamily: typography.heading,
         fontSize: 16,
         color: '#fff',
+    },
+    editArea: {
+        paddingHorizontal: 16,
+        paddingBottom: 12,
+    },
+    editInputRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    editInput: {
+        flex: 1,
+        backgroundColor: '#f8f8f8',
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        fontFamily: typography.body,
+        fontSize: 16,
+        color: colors.textPrimary,
+        borderWidth: 1,
+        borderColor: '#e8e8e8',
+    },
+    editInputUnit: {
+        fontFamily: typography.body,
+        fontSize: 15,
+        color: colors.textSecondary,
+    },
+    editSaveBtn: {
+        backgroundColor: WATER_COLORS.buttonBorder,
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 12,
+    },
+    editSaveBtnText: {
+        fontFamily: typography.heading,
+        fontSize: 14,
+        color: '#fff',
+    },
+    containerTypeBtn: {
+        flex: 1,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e8e8e8',
+        backgroundColor: '#f8f8f8',
+        alignItems: 'center',
+    },
+    containerTypeBtnActive: {
+        borderColor: WATER_COLORS.buttonBorder,
+        backgroundColor: WATER_COLORS.cardBg,
+    },
+    containerTypeBtnText: {
+        fontFamily: typography.body,
+        fontSize: 14,
+        color: colors.textSecondary,
+    },
+    containerTypeBtnTextActive: {
+        fontFamily: typography.heading,
+        color: WATER_COLORS.text,
     },
 });

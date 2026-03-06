@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
     StyleSheet, Text, View, ScrollView, Pressable, TextInput,
-    Switch, Platform, KeyboardAvoidingView, Animated,
+    Switch, Platform, KeyboardAvoidingView, Animated, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -13,6 +13,10 @@ import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { shadows } from '../theme/shadows';
 import { RootStackParamList } from '../navigation/types';
+import { useAuth } from '../context/AuthContext';
+import { addMedication } from '../services/medication';
+import { scheduleMedicationReminder, registerForPushNotifications } from '../services/notifications';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 import PillsIcon from '../../assets/icons/pills.svg';
 import AddMedicationIcon from '../../assets/icons/add medication.svg';
@@ -46,6 +50,8 @@ const REMINDER_TIMINGS = ['At time', '5 min', '15 min', '30 min'];
 export function AddMedicationScreen() {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<NavigationProp>();
+    const { user } = useAuth();
+    const [saving, setSaving] = useState(false);
 
     // ─ Form state
     const [name, setName] = useState('');
@@ -55,22 +61,83 @@ export function AddMedicationScreen() {
     const [frequency, setFrequency] = useState('once');
     const [selectedDays, setSelectedDays] = useState<string[]>([...DAYS_FULL]);
     const [time, setTime] = useState('08:00 AM');
+    const [timeDate, setTimeDate] = useState(() => {
+        const d = new Date(); d.setHours(8, 0, 0, 0); return d;
+    });
+    const [time2, setTime2] = useState('08:00 PM');
+    const [time2Date, setTime2Date] = useState(() => {
+        const d = new Date(); d.setHours(20, 0, 0, 0); return d;
+    });
+    const [showTimePicker, setShowTimePicker] = useState(false);
+    const [showTime2Picker, setShowTime2Picker] = useState(false);
     const [reminderEnabled, setReminderEnabled] = useState(true);
     const [reminderTiming, setReminderTiming] = useState('At time');
     const [startDate] = useState('Feb 10, 2026');
     const [endDate] = useState('');
     const [notes, setNotes] = useState('');
 
+    const formatTime = (date: Date) => {
+        let h = date.getHours();
+        const m = date.getMinutes();
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12 || 12;
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${ampm}`;
+    };
+
+    const onTimeChange = (event: DateTimePickerEvent, date?: Date) => {
+        if (Platform.OS === 'android') setShowTimePicker(false);
+        if (date) {
+            setTimeDate(date);
+            setTime(formatTime(date));
+        }
+    };
+
+    const onTime2Change = (event: DateTimePickerEvent, date?: Date) => {
+        if (Platform.OS === 'android') setShowTime2Picker(false);
+        if (date) {
+            setTime2Date(date);
+            setTime2(formatTime(date));
+        }
+    };
+
     const toggleDay = (day: string) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setSelectedDays(p => p.includes(day) ? p.filter(d => d !== day) : [...p, day]);
     };
 
-    const canSave = name.trim().length > 0 && dosage.trim().length > 0;
+    const canSave = name.trim().length > 0 && dosage.trim().length > 0 && !saving;
 
-    const handleSave = () => {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        navigation.goBack();
+    const handleSave = async () => {
+        if (!user || !canSave) return;
+        setSaving(true);
+        try {
+            const docRef = await addMedication(user.uid, {
+                name: name.trim(),
+                dosage: dosage.trim(),
+                unit: dosageUnit,
+                form: medicineForm,
+                frequency,
+                days: selectedDays,
+                times: [time],
+                reminder: reminderEnabled,
+                reminderTiming,
+                startDate,
+                notes: notes.trim() || null,
+            });
+
+            // Schedule push notifications if reminders are enabled
+            if (reminderEnabled && docRef?.id) {
+                await registerForPushNotifications(user.uid);
+                await scheduleMedicationReminder(docRef.id, name.trim(), time, selectedDays);
+            }
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            navigation.goBack();
+        } catch (e: any) {
+            Alert.alert('Error saving medication', e.message);
+        } finally {
+            setSaving(false);
+        }
     };
 
     // ─ Render
@@ -217,22 +284,72 @@ export function AddMedicationScreen() {
 
                         {/* Time */}
                         <Text style={styles.label}>Time</Text>
-                        <Pressable style={styles.timeRow}>
+                        <Pressable style={styles.timeRow} onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            setShowTimePicker(!showTimePicker);
+                        }}>
                             <View style={styles.timeIconWrap}>
                                 <Feather name="clock" size={16} color={colors.primary} />
                             </View>
                             <Text style={styles.timeValue}>{time}</Text>
-                            <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                            <Feather name={showTimePicker ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
                         </Pressable>
 
+                        {showTimePicker && (
+                            <View style={styles.pickerContainer}>
+                                <DateTimePicker
+                                    value={timeDate}
+                                    mode="time"
+                                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                    onChange={onTimeChange}
+                                    textColor={colors.textPrimary}
+                                    themeVariant="light"
+                                />
+                                {Platform.OS === 'ios' && (
+                                    <Pressable
+                                        style={styles.pickerDoneBtn}
+                                        onPress={() => setShowTimePicker(false)}
+                                    >
+                                        <Text style={styles.pickerDoneText}>Done</Text>
+                                    </Pressable>
+                                )}
+                            </View>
+                        )}
+
                         {frequency === 'twice' && (
-                            <Pressable style={[styles.timeRow, { marginTop: 10 }]}>
-                                <View style={styles.timeIconWrap}>
-                                    <Feather name="clock" size={16} color={colors.primary} />
-                                </View>
-                                <Text style={styles.timeValue}>08:00 PM</Text>
-                                <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                            </Pressable>
+                            <>
+                                <Pressable style={[styles.timeRow, { marginTop: 10 }]} onPress={() => {
+                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                    setShowTime2Picker(!showTime2Picker);
+                                }}>
+                                    <View style={styles.timeIconWrap}>
+                                        <Feather name="clock" size={16} color={colors.primary} />
+                                    </View>
+                                    <Text style={styles.timeValue}>{time2}</Text>
+                                    <Feather name={showTime2Picker ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+                                </Pressable>
+
+                                {showTime2Picker && (
+                                    <View style={styles.pickerContainer}>
+                                        <DateTimePicker
+                                            value={time2Date}
+                                            mode="time"
+                                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                            onChange={onTime2Change}
+                                            textColor={colors.textPrimary}
+                                            themeVariant="light"
+                                        />
+                                        {Platform.OS === 'ios' && (
+                                            <Pressable
+                                                style={styles.pickerDoneBtn}
+                                                onPress={() => setShowTime2Picker(false)}
+                                            >
+                                                <Text style={styles.pickerDoneText}>Done</Text>
+                                            </Pressable>
+                                        )}
+                                    </View>
+                                )}
+                            </>
                         )}
 
                         <View style={styles.divider} />
@@ -630,4 +747,22 @@ const styles = StyleSheet.create({
         borderRadius: 16,
     },
     saveText: { fontFamily: typography.heading, fontSize: 16, color: '#fff' },
+
+    // ─ Time picker
+    pickerContainer: {
+        backgroundColor: colors.surfaceAlt,
+        borderRadius: 14,
+        marginTop: 8,
+        overflow: 'hidden',
+    },
+    pickerDoneBtn: {
+        alignSelf: 'flex-end',
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+    },
+    pickerDoneText: {
+        fontFamily: typography.subheading,
+        fontSize: 16,
+        color: colors.primary,
+    },
 });

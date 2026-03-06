@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
+    ActivityIndicator,
+    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -15,6 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import { RootStackParamList } from '../navigation/types';
 import { typography } from '../theme/typography';
 import { PressableScale } from '../components/PressableScale';
+import { signUp, signInWithGoogle, signInWithApple } from '../services/auth';
 
 // ── Colors ─────────────────────────────────────────────────────
 const C = {
@@ -36,10 +39,58 @@ export function SignUpScreen({ navigation }: Props) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    const [loading, setLoading] = useState(false);
 
-    const handleSignUp = () => {
-        // TODO: integrate real auth
-        navigation.replace('Onboarding');
+    const handleGoogleSignIn = async () => {
+        setLoading(true);
+        try {
+            await signInWithGoogle();
+        } catch (err: any) {
+            if (err.code !== 'SIGN_IN_CANCELLED') {
+                Alert.alert('Google Sign-In Failed', err.message);
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleAppleSignIn = async () => {
+        setLoading(true);
+        try {
+            await signInWithApple();
+        } catch (err: any) {
+            if (err.code !== 'ERR_REQUEST_CANCELED') {
+                Alert.alert('Apple Sign-In Failed', err.message);
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSignUp = async () => {
+        if (!username.trim() || !email.trim() || !password.trim()) {
+            Alert.alert('Missing fields', 'Please fill in all fields.');
+            return;
+        }
+        if (password.length < 6) {
+            Alert.alert('Weak password', 'Password must be at least 6 characters.');
+            return;
+        }
+        setLoading(true);
+        try {
+            await signUp(email.trim(), password, username.trim());
+            // Auth state change in AuthContext handles navigation automatically
+        } catch (err: any) {
+            const msg =
+                err.code === 'auth/email-already-in-use'
+                    ? 'This email is already registered. Try logging in.'
+                    : err.code === 'auth/invalid-email'
+                        ? 'Please enter a valid email address.'
+                        : err.message || 'Sign up failed. Please try again.';
+            Alert.alert('Sign Up Failed', msg);
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -114,8 +165,16 @@ export function SignUpScreen({ navigation }: Props) {
                     </View>
 
                     {/* Sign Up Button */}
-                    <PressableScale style={styles.signUpButton} onPress={handleSignUp}>
-                        <Text style={styles.signUpButtonText}>Create account</Text>
+                    <PressableScale
+                        style={[styles.signUpButton, loading && { opacity: 0.7 }]}
+                        onPress={handleSignUp}
+                        disabled={loading}
+                    >
+                        {loading ? (
+                            <ActivityIndicator color="#FFFFFF" />
+                        ) : (
+                            <Text style={styles.signUpButtonText}>Create account</Text>
+                        )}
                     </PressableScale>
 
                     {/* OR separator */}
@@ -126,19 +185,21 @@ export function SignUpScreen({ navigation }: Props) {
                     </View>
 
                     {/* Social Buttons */}
-                    <PressableScale style={styles.socialButton}>
+                    <PressableScale style={styles.socialButton} onPress={handleGoogleSignIn} disabled={loading}>
                         <View style={styles.socialIconWrap}>
                             <Text style={{ fontSize: 20 }}>G</Text>
                         </View>
                         <Text style={styles.socialButtonText}>Continue with Google</Text>
                     </PressableScale>
 
-                    <PressableScale style={styles.socialButton}>
-                        <View style={styles.socialIconWrap}>
-                            <MaterialCommunityIcons name="apple" size={22} color={C.black} />
-                        </View>
-                        <Text style={styles.socialButtonText}>Continue with Apple</Text>
-                    </PressableScale>
+                    {Platform.OS === 'ios' && (
+                        <PressableScale style={styles.socialButton} onPress={handleAppleSignIn} disabled={loading}>
+                            <View style={styles.socialIconWrap}>
+                                <MaterialCommunityIcons name="apple" size={22} color={C.black} />
+                            </View>
+                            <Text style={styles.socialButtonText}>Continue with Apple</Text>
+                        </PressableScale>
+                    )}
 
                     {/* Already have account */}
                     <View style={styles.bottomRow}>

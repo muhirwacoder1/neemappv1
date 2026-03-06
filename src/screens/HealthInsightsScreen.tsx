@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, Text, View, ScrollView, Pressable, Dimensions, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -12,6 +12,13 @@ import { shadows } from '../theme/shadows';
 import { RootStackParamList, MetricType } from '../navigation/types';
 import { AddBloodPressureModal } from '../components/AddBloodPressureModal';
 import { LogHbA1cModal } from '../components/LogHbA1cModal';
+import { LogWaterModal } from '../components/LogWaterModal';
+import { LogGlucoseModal } from '../components/LogGlucoseModal';
+import { AddWeightModal } from '../components/AddWeightModal';
+import { WeightResultModal } from '../components/WeightResultModal';
+import { useAuth } from '../context/AuthContext';
+import { getReadings, addBloodPressure, addGlucoseReading, addWeightReading, addWaterIntake, getUserGoalWeight, getAllReadings, getUserWaterSettings, updateUserWaterSettings, WaterSettings } from '../services/healthData';
+import { Timestamp } from 'firebase/firestore';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type RouteProps = RouteProp<RootStackParamList, 'HealthInsights'>;
@@ -377,7 +384,7 @@ function WeightInsightContent({ data, periodIndex, setPeriodIndex }: { data: any
                     </View>
                 </View>
                 <Text style={styles.weightProgressText}>
-                    Progress toward the goal: <Text style={{ color: colors.success, fontFamily: typography.subheading }}>{data.progressKg} kg</Text>
+                    Progress toward the goal: <Text style={{ color: parseFloat(data.progressKg) <= 0 ? colors.success : colors.error, fontFamily: typography.subheading }}>{data.progressKg} kg</Text>
                 </Text>
             </View>
 
@@ -389,7 +396,7 @@ function WeightInsightContent({ data, periodIndex, setPeriodIndex }: { data: any
                         <View style={styles.historyContent}>
                             <Text style={styles.historyDate}>{item.date}</Text>
                             <Text style={styles.historyValue}>
-                                {item.value} • <Text style={{ color: colors.success }}>{item.change}</Text>
+                                {item.value} • <Text style={{ color: item.change?.includes('+') ? colors.error : colors.success }}>{item.change}</Text>
                             </Text>
                         </View>
                     </View>
@@ -466,6 +473,188 @@ function HbA1cInsightContent({ data }: { data: any }) {
                     ))}
                 </View>
             )}
+        </>
+    );
+}
+// ── Glucose Zone Helpers ──────────────────────────────────────────
+const GLUCOSE_ZONES = {
+    LOW: { min: 0, max: 3.9, color: '#4A90D9', bgColor: 'rgba(74, 144, 217, 0.08)', label: 'Low' },
+    NORMAL: { min: 3.9, max: 10, color: '#34C759', bgColor: 'rgba(52, 199, 89, 0.12)', label: 'Normal' },
+    HIGH: { min: 10, max: 20, color: '#FF3B30', bgColor: 'rgba(255, 59, 48, 0.10)', label: 'High' },
+};
+
+function getGlucoseZoneColor(value: number): string {
+    if (value < 3.9) return GLUCOSE_ZONES.LOW.color;
+    if (value <= 10) return GLUCOSE_ZONES.NORMAL.color;
+    return GLUCOSE_ZONES.HIGH.color;
+}
+
+// ── Glucose Day Chart ─────────────────────────────────────────────
+function GlucoseDayChart({ readings }: { readings: any[] }) {
+    const CHART_WIDTH = Math.max(screenWidth * 1.3, 480);
+    const CHART_HEIGHT = 180;
+    const Y_MIN = 2;
+    const Y_MAX = 14;
+    const Y_RANGE = Y_MAX - Y_MIN;
+
+    const getY = (val: number) => CHART_HEIGHT - ((Math.min(Math.max(val, Y_MIN), Y_MAX) - Y_MIN) / Y_RANGE) * CHART_HEIGHT;
+    // Clean 3-hour intervals starting at midnight
+    const timeLabels = [
+        { label: '12 PM', hour: 12 },
+        { label: '3 PM', hour: 15 },
+        { label: '6 PM', hour: 18 },
+        { label: '9 PM', hour: 21 },
+    ];
+    const getX = (date: Date) => {
+        const hours = date.getHours() + date.getMinutes() / 60;
+        return (hours / 24) * CHART_WIDTH;
+    };
+    const yLabels = [12, 10, 8, 6];
+
+    return (
+        <View style={gStyles.chartCard}>
+            <View style={gStyles.chartRow}>
+                <View style={[gStyles.yAxis, { height: CHART_HEIGHT }]}>
+                    {yLabels.map((label, i) => (
+                        <Text key={i} style={gStyles.yLabel}>{label}</Text>
+                    ))}
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={gStyles.chartScroll}>
+                    <View style={[gStyles.chartArea, { width: CHART_WIDTH, height: CHART_HEIGHT }]}>
+                        {/* Zone bands */}
+                        <View style={[gStyles.zoneBand, { top: getY(Y_MAX), height: getY(10) - getY(Y_MAX), backgroundColor: GLUCOSE_ZONES.HIGH.bgColor }]} />
+                        <View style={[gStyles.zoneBand, { top: getY(10), height: getY(3.9) - getY(10), backgroundColor: GLUCOSE_ZONES.NORMAL.bgColor }]} />
+                        <View style={[gStyles.zoneBand, { top: getY(3.9), height: getY(Y_MIN) - getY(3.9), backgroundColor: GLUCOSE_ZONES.LOW.bgColor }]} />
+                        {/* Grid lines */}
+                        {yLabels.map((label, i) => (
+                            <View key={i} style={[gStyles.gridLineThin, { top: getY(label) }]} />
+                        ))}
+                        {/* Zone boundary lines */}
+                        <View style={[gStyles.zoneLine, { top: getY(10) }]} />
+                        <View style={[gStyles.zoneLine, { top: getY(3.9) }]} />
+                        {/* Glucose dots */}
+                        {readings.map((r: any, i: number) => {
+                            if (!r.timestamp?.toDate) return null;
+                            const date = r.timestamp.toDate();
+                            const x = getX(date);
+                            const y = getY(r.value);
+                            return (
+                                <View key={i} style={[gStyles.dot, { left: x - 6, top: y - 6, backgroundColor: getGlucoseZoneColor(r.value) }]} />
+                            );
+                        })}
+                        {/* X-axis labels at 3-hour intervals */}
+                        <View style={gStyles.xAxisRow}>
+                            {timeLabels.map((t, i) => (
+                                <Text key={i} style={[gStyles.xLabel, { left: (t.hour / 24) * CHART_WIDTH - 16 }]}>{t.label}</Text>
+                            ))}
+                        </View>
+                    </View>
+                </ScrollView>
+            </View>
+        </View>
+    );
+}
+
+// ── Glucose Insight Content ───────────────────────────────────────
+function GlucoseInsightContent({ data, periodIndex, setPeriodIndex }: { data: any; periodIndex: number; setPeriodIndex: (i: number) => void }) {
+    const [zonesExpanded, setZonesExpanded] = useState(false);
+    return (
+        <>
+            <TimeSelector options={['Day', 'Week', 'Month']} selected={periodIndex} onSelect={setPeriodIndex} />
+            <View style={styles.dateNavRow}>
+                <Pressable style={styles.dateArrowBtn} onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}>
+                    <Feather name="chevron-left" size={24} color={colors.textPrimary} />
+                </Pressable>
+                <Text style={styles.dateRangeText}>Today</Text>
+                <Pressable style={styles.dateArrowBtn} onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}>
+                    <Feather name="chevron-right" size={24} color={colors.textPrimary} />
+                </Pressable>
+            </View>
+
+            <GlucoseDayChart readings={data.todayReadings || []} />
+
+            {/* Insights Card */}
+            <View style={gStyles.insightsCard}>
+                <Text style={gStyles.insightsTitle}>
+                    Your blood glucose insights <Text style={gStyles.insightsUnit}>(mmol/l)</Text>
+                </Text>
+                <View style={styles.summaryColumns}>
+                    <View style={styles.summaryColumn}>
+                        <Text style={styles.summaryValue}>{data.insights?.average ?? '-'}</Text>
+                        <Text style={styles.summaryLabel}>Average</Text>
+                    </View>
+                    <View style={styles.summaryDivider} />
+                    <View style={styles.summaryColumn}>
+                        <Text style={styles.summaryValue}>{data.insights?.max ?? '-'}</Text>
+                        <Text style={styles.summaryLabel}>Max</Text>
+                    </View>
+                    <View style={styles.summaryDivider} />
+                    <View style={styles.summaryColumn}>
+                        <Text style={styles.summaryValue}>{data.insights?.min ?? '-'}</Text>
+                        <Text style={styles.summaryLabel}>Min</Text>
+                    </View>
+                </View>
+                <Text style={gStyles.readingsCount}>{data.readingsToday ?? 0} readings today</Text>
+                <Text style={gStyles.inRangeText}>
+                    You were in range <Text style={{ color: colors.success, fontFamily: typography.subheading }}>{data.inRangePercent ?? 0}%</Text> of the time
+                </Text>
+            </View>
+
+            {/* History */}
+            <Text style={styles.sectionTitle}>History</Text>
+            {(!data.history || data.history.length === 0) ? (
+                <View style={styles.emptyHistoryCard}>
+                    <Text style={styles.emptyHistoryText}>No glucose readings yet</Text>
+                </View>
+            ) : (
+                <View style={styles.historyCard}>
+                    {data.history.map((item: any, i: number) => (
+                        <View key={i} style={[styles.historyItem, i > 0 && styles.historyItemBorder]}>
+                            <View style={[gStyles.zoneIndicator, { backgroundColor: item.zoneColor }]} />
+                            <View style={[styles.historyContent, { marginLeft: 12 }]}>
+                                <Text style={styles.historyDate}>{item.date}</Text>
+                                <Text style={styles.historyValue}>{item.value}</Text>
+                            </View>
+                            {item.mealTiming ? (
+                                <View style={gStyles.mealBadge}>
+                                    <Text style={gStyles.mealBadgeText}>{item.mealTiming}</Text>
+                                </View>
+                            ) : null}
+                        </View>
+                    ))}
+                </View>
+            )}
+
+            {/* Blood Glucose Zones */}
+            <Pressable
+                style={gStyles.zonesCard}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setZonesExpanded(p => !p); }}
+            >
+                <View style={gStyles.zonesHeader}>
+                    <Text style={gStyles.zonesTitle}>Blood glucose zones</Text>
+                    <Feather name={zonesExpanded ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textPrimary} />
+                </View>
+                {zonesExpanded && (
+                    <View style={gStyles.zonesBody}>
+                        <View style={gStyles.zonesTableHeader}>
+                            <Text style={gStyles.zonesHeaderLabel}>Level</Text>
+                            <Text style={gStyles.zonesHeaderValue}>Glucose (mmol/L)</Text>
+                        </View>
+                        <View style={gStyles.zonesDivider} />
+                        {[
+                            { ...GLUCOSE_ZONES.LOW, range: '< 3.9' },
+                            { ...GLUCOSE_ZONES.NORMAL, range: '3.9 – 10' },
+                            { ...GLUCOSE_ZONES.HIGH, range: '> 10' },
+                        ].map((zone, i) => (
+                            <View key={i} style={gStyles.zoneRow}>
+                                <View style={[gStyles.zoneIndicator, { backgroundColor: zone.color }]} />
+                                <Text style={gStyles.zoneLabel}>{zone.label}</Text>
+                                <Text style={gStyles.zoneRange}>{zone.range}</Text>
+                            </View>
+                        ))}
+                    </View>
+                )}
+            </Pressable>
         </>
     );
 }
@@ -580,8 +769,201 @@ export function HealthInsightsScreen() {
     const [periodIndex, setPeriodIndex] = useState(0);
     const [showBPModal, setShowBPModal] = useState(false);
     const [showHbA1cModal, setShowHbA1cModal] = useState(false);
+    const [showWaterModal, setShowWaterModal] = useState(false);
+    const [waterSettings, setWaterSettings] = useState<WaterSettings>({ dailyGoalL: 1.5, containerType: 'glass', containerVolumeL: 0.25 });
+    const [showGlucoseModal, setShowGlucoseModal] = useState(false);
+    const [showWeightModal, setShowWeightModal] = useState(false);
+    const [showWeightResult, setShowWeightResult] = useState(false);
+    const [weightResultData, setWeightResultData] = useState<{
+        currentWeight: number; previousWeight: number | null;
+        startingWeight: number | null; goalWeight: number | null;
+        history: { date: string; value: string; change: string }[];
+    } | null>(null);
+    const { user } = useAuth();
+    const [liveData, setLiveData] = useState<Record<string, any>>({});
+    const [refreshKey, setRefreshKey] = useState(0);
 
-    const data = mockInsightsData[activeTab];
+    // Fetch real data from Firestore
+    useEffect(() => {
+        if (!user) return;
+        // Load water settings
+        getUserWaterSettings(user.uid).then(setWaterSettings).catch(console.error);
+        (async () => {
+            try {
+                const [glucoseRaw, weightRaw, bpRaw, waterRaw] = await Promise.all([
+                    getReadings(user.uid, 'glucose', 7),
+                    getReadings(user.uid, 'weight', 30),
+                    getReadings(user.uid, 'bloodPressure', 7),
+                    getReadings(user.uid, 'water', 7),
+                ]);
+
+                const toWeekBuckets = (items: any[], valueFn: (item: any) => number) => {
+                    const buckets = [0, 0, 0, 0, 0, 0, 0];
+                    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                    items.forEach((item) => {
+                        const ts = item.timestamp as Timestamp;
+                        if (!ts?.toDate) return;
+                        const day = ts.toDate().getDay();
+                        buckets[day] = Math.max(buckets[day], valueFn(item));
+                    });
+                    return buckets;
+                };
+
+                const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+
+                // Glucose
+                const glucoseValues = glucoseRaw.map((r: any) => r.value).filter(Boolean);
+                const glucoseChart = toWeekBuckets(glucoseRaw, (r) => r.value);
+                const glucoseMax = Math.max(...glucoseValues, 10);
+
+                // Weight
+                const weightValues = weightRaw.map((r: any) => r.kg + (r.grams || 0) / 1000);
+                const weightPoints = weightValues.length > 0 ? weightValues.reverse() : mockInsightsData.weight.linePoints;
+                const currentWeight = weightValues.length > 0 ? weightValues[0] : mockInsightsData.weight.currentWeight;
+
+                // Blood Pressure
+                const bpValues = bpRaw.map((r: any) => r.systolic).filter(Boolean);
+                const bpChart = toWeekBuckets(bpRaw, (r) => r.systolic);
+                const bpMax = Math.max(...bpValues, 150);
+
+                // Water
+                const waterValues = waterRaw.map((r: any) => r.amount).filter(Boolean);
+                const waterChart = toWeekBuckets(waterRaw, (r) => r.amount);
+                const waterMax = Math.max(...waterValues, 3000);
+
+                const formatDate = (ts: Timestamp) => {
+                    if (!ts?.toDate) return '';
+                    return ts.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+                };
+
+                // Weight - extended processing
+                const startingWeight = weightValues.length > 0 ? weightValues[weightValues.length - 1] : null;
+                const curWeight = weightValues.length > 0 ? weightValues[0] : null;
+                const progressKg = startingWeight !== null && curWeight !== null
+                    ? (curWeight - startingWeight).toFixed(1)
+                    : '0';
+                const goalWeight = await getUserGoalWeight(user.uid);
+                const allWeightRaw = await getAllReadings(user.uid, 'weight');
+                const historyEntries = allWeightRaw.map((r: any, idx: number, arr: any[]) => {
+                    const wKg = r.kg + (r.grams || 0) / 1000;
+                    const first = arr[arr.length - 1];
+                    const firstKg = first.kg + (first.grams || 0) / 1000;
+                    const diff = wKg - firstKg;
+                    const sign = diff > 0 ? '+' : '';
+                    return {
+                        date: formatDate(r.timestamp),
+                        value: `${r.kg}.${r.grams || 0} kg`,
+                        change: idx < arr.length - 1 ? `(${sign}${diff.toFixed(1)} kg)` : '(starting)',
+                    };
+                });
+
+                // Glucose - extended processing
+                const allGlucoseRaw = await getAllReadings(user.uid, 'glucose');
+                const allGlucoseValues = allGlucoseRaw.map((r: any) => r.value).filter(Boolean);
+                const inRangeCount = allGlucoseValues.filter((v: number) => v >= 3.9 && v <= 10).length;
+                const inRangePercent = allGlucoseValues.length > 0
+                    ? Math.round((inRangeCount / allGlucoseValues.length) * 100)
+                    : 0;
+
+                // Today's readings for day chart
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const todayReadings = allGlucoseRaw.filter((r: any) => {
+                    if (!r.timestamp?.toDate) return false;
+                    return r.timestamp.toDate() >= today;
+                });
+
+                setLiveData({
+                    glucose: {
+                        rawReadings: allGlucoseRaw,
+                        todayReadings,
+                        chartData: glucoseChart,
+                        maxValue: glucoseMax,
+                        goal: '3.9 – 10 mmol/L',
+                        goalLabel: 'Target range',
+                        insights: {
+                            average: allGlucoseValues.length ? (allGlucoseValues.reduce((a: number, b: number) => a + b, 0) / allGlucoseValues.length).toFixed(1) : '-',
+                            max: allGlucoseValues.length ? Math.max(...allGlucoseValues) : '-',
+                            min: allGlucoseValues.length ? Math.min(...allGlucoseValues) : '-',
+                        },
+                        readingsToday: todayReadings.length,
+                        inRangePercent,
+                        unit: 'mmol/l',
+                        summary: `${todayReadings.length} readings today`,
+                        successDays: null,
+                        history: allGlucoseRaw.map((r: any) => {
+                            const val = r.value;
+                            let zoneColor = colors.success; // normal
+                            if (val < 3.9) zoneColor = colors.primary; // low - blue
+                            else if (val > 10) zoneColor = colors.error; // high - red
+                            return {
+                                date: formatDate(r.timestamp),
+                                value: `${val} mmol/L`,
+                                mealTiming: r.mealTiming || '',
+                                zoneColor,
+                                rawValue: val,
+                            };
+                        }),
+                    },
+                    weight: {
+                        linePoints: weightPoints.length >= 2 ? weightPoints : mockInsightsData.weight.linePoints,
+                        maxValue: weightPoints.length ? Math.max(...weightPoints) + 4 : mockInsightsData.weight.maxValue,
+                        minValue: weightPoints.length ? Math.min(...weightPoints) - 4 : mockInsightsData.weight.minValue,
+                        targetWeight: goalWeight ?? 87,
+                        startingWeight: startingWeight ? startingWeight.toFixed(1) : mockInsightsData.weight.startingWeight,
+                        currentWeight: curWeight ? curWeight.toFixed(1) : mockInsightsData.weight.currentWeight,
+                        progressKg,
+                        goal: goalWeight ? `${goalWeight} kg` : mockInsightsData.weight.goal,
+                        goalLabel: 'Target weight',
+                        dateRange: allWeightRaw.length > 0 ? formatDate((allWeightRaw[allWeightRaw.length - 1] as any).timestamp) : 'No data',
+                        dateRangeEnd: allWeightRaw.length > 0 ? formatDate((allWeightRaw[0] as any).timestamp) : '',
+                        unit: 'kg',
+                        history: historyEntries,
+                    },
+                    bloodpressure: {
+                        chartData: bpChart,
+                        maxValue: bpMax,
+                        goal: '120/80 mmHg',
+                        goalLabel: 'Blood pressure goal',
+                        insights: {
+                            average: bpValues.length ? `${avg(bpValues)}/${avg(bpRaw.map((r: any) => r.diastolic))}` : '-',
+                            max: bpValues.length ? Math.max(...bpValues) : '-',
+                            min: bpValues.length ? Math.min(...bpValues) : '-',
+                        },
+                        unit: 'mmHg',
+                        summary: `${bpValues.length} readings this week`,
+                        successDays: null,
+                        history: bpRaw.slice(0, 5).map((r: any) => ({
+                            date: formatDate(r.timestamp),
+                            value: `${r.systolic}/${r.diastolic} mmHg`,
+                        })),
+                    },
+                    water: {
+                        chartData: waterChart.map((v: number) => v / 1000),
+                        maxValue: waterMax / 1000,
+                        goal: `${waterSettings.dailyGoalL} L`,
+                        goalLabel: 'Water goal',
+                        insights: {
+                            average: waterValues.length ? (avg(waterValues) / 1000).toFixed(2) : '0',
+                            dailyGoal: waterSettings.dailyGoalL,
+                        },
+                        unit: 'L',
+                        summary: waterValues.length ? 'You hit your water goal on' : 'No water data yet',
+                        successDays: waterValues.length ? `${waterValues.filter(v => v / 1000 >= waterSettings.dailyGoalL).length} out of 7 days` : null,
+                        history: waterRaw.slice(0, 10).map((r: any) => ({
+                            date: formatDate(r.timestamp),
+                            value: `${(r.amount / 1000).toFixed(2)} L`,
+                        })),
+                    },
+                });
+            } catch (e) {
+                console.error('Failed to load insights data:', e);
+            }
+        })();
+    }, [user, activeTab, refreshKey]);
+
+    // Use live data when available, fall back to mock
+    const data = liveData[activeTab] || mockInsightsData[activeTab];
 
     const getChartColor = () => {
         switch (activeTab) {
@@ -642,6 +1024,8 @@ export function HealthInsightsScreen() {
             >
                 {activeTab === 'weight' ? (
                     <WeightInsightContent data={data} periodIndex={periodIndex} setPeriodIndex={setPeriodIndex} />
+                ) : activeTab === 'glucose' ? (
+                    <GlucoseInsightContent data={data} periodIndex={periodIndex} setPeriodIndex={setPeriodIndex} />
                 ) : activeTab === 'hba1c' ? (
                     <HbA1cInsightContent data={data} />
                 ) : (
@@ -661,7 +1045,13 @@ export function HealthInsightsScreen() {
                 style={[styles.fab, { bottom: insets.bottom + 90 }]}
                 onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    if (activeTab === 'bloodpressure') {
+                    if (activeTab === 'water') {
+                        setShowWaterModal(true);
+                    } else if (activeTab === 'glucose') {
+                        setShowGlucoseModal(true);
+                    } else if (activeTab === 'weight') {
+                        setShowWeightModal(true);
+                    } else if (activeTab === 'bloodpressure') {
                         setShowBPModal(true);
                     } else if (activeTab === 'hba1c') {
                         setShowHbA1cModal(true);
@@ -675,6 +1065,17 @@ export function HealthInsightsScreen() {
             <AddBloodPressureModal
                 visible={showBPModal}
                 onClose={() => setShowBPModal(false)}
+                onSave={async (systolic, diastolic) => {
+                    if (!user) return;
+                    try {
+                        await addBloodPressure(user.uid, systolic, diastolic);
+                        setShowBPModal(false);
+                        // Refresh data
+                        setLiveData({});
+                    } catch (e: any) {
+                        console.error(e);
+                    }
+                }}
             />
 
             {/* HbA1c Modal */}
@@ -682,6 +1083,124 @@ export function HealthInsightsScreen() {
                 visible={showHbA1cModal}
                 onClose={() => setShowHbA1cModal(false)}
             />
+
+            {/* Log Water Modal */}
+            <LogWaterModal
+                visible={showWaterModal}
+                onClose={() => setShowWaterModal(false)}
+                dailyGoalL={waterSettings.dailyGoalL}
+                containerType={waterSettings.containerType}
+                containerVolumeL={waterSettings.containerVolumeL}
+                onUpdateGoal={async (goalL) => {
+                    if (!user) return;
+                    await updateUserWaterSettings(user.uid, { dailyGoalL: goalL });
+                    setWaterSettings(prev => ({ ...prev, dailyGoalL: goalL }));
+                }}
+                onUpdateContainer={async (type, volumeL) => {
+                    if (!user) return;
+                    await updateUserWaterSettings(user.uid, { containerType: type, containerVolumeL: volumeL });
+                    setWaterSettings(prev => ({ ...prev, containerType: type, containerVolumeL: volumeL }));
+                }}
+                onSave={async (amountL) => {
+                    if (!user) return;
+                    try {
+                        await addWaterIntake(user.uid, amountL * 1000);
+                        setShowWaterModal(false);
+                        setRefreshKey(k => k + 1);
+                    } catch (e: any) {
+                        console.error(e);
+                    }
+                }}
+            />
+
+            {/* Log Glucose Modal */}
+            <LogGlucoseModal
+                visible={showGlucoseModal}
+                onClose={() => setShowGlucoseModal(false)}
+                onSave={async (value, mealTiming) => {
+                    if (!user) return;
+                    try {
+                        await addGlucoseReading(user.uid, value, 'mmol/L', mealTiming);
+                        setShowGlucoseModal(false);
+                        setRefreshKey(k => k + 1);
+                    } catch (e: any) {
+                        console.error(e);
+                    }
+                }}
+            />
+
+            {/* Add Weight Modal */}
+            <AddWeightModal
+                visible={showWeightModal}
+                onClose={() => setShowWeightModal(false)}
+                initialKg={70}
+                onSave={async (kg, grams) => {
+                    if (!user) return;
+                    try {
+                        // Get previous weight before saving
+                        const prevData = liveData.weight;
+                        const prevWeight = prevData?.currentWeight ? parseFloat(prevData.currentWeight) : null;
+
+                        await addWeightReading(user.uid, kg, grams);
+                        setShowWeightModal(false);
+
+                        // Fetch data for result screen
+                        const [goal, allReadings] = await Promise.all([
+                            getUserGoalWeight(user.uid),
+                            getAllReadings(user.uid, 'weight'),
+                        ]);
+
+                        const formatDateLocal = (ts: any) => {
+                            if (!ts?.toDate) return '';
+                            return ts.toDate().toLocaleDateString('en-US', {
+                                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                            });
+                        };
+
+                        const historyEntries = allReadings.map((r: any, idx: number, arr: any[]) => {
+                            const wKg = r.kg + (r.grams || 0) / 1000;
+                            const first = arr[arr.length - 1];
+                            const firstKg = first.kg + (first.grams || 0) / 1000;
+                            const diff = wKg - firstKg;
+                            const sign = diff > 0 ? '+' : '';
+                            return {
+                                date: formatDateLocal(r.timestamp),
+                                value: `${r.kg}.${r.grams || 0} kg`,
+                                change: idx < arr.length - 1 ? `(${sign}${diff.toFixed(1)} kg)` : '(starting)',
+                            };
+                        });
+
+                        const startingW = allReadings.length > 0
+                            ? (allReadings[allReadings.length - 1] as any).kg + ((allReadings[allReadings.length - 1] as any).grams || 0) / 1000
+                            : null;
+
+                        setWeightResultData({
+                            currentWeight: kg + grams / 1000,
+                            previousWeight: prevWeight,
+                            startingWeight: startingW,
+                            goalWeight: goal,
+                            history: historyEntries,
+                        });
+                        setShowWeightResult(true);
+                        setLiveData({});
+                    } catch (e: any) {
+                        console.error(e);
+                    }
+                }}
+            />
+
+            {/* Weight Result Modal */}
+            {weightResultData && (
+                <WeightResultModal
+                    visible={showWeightResult}
+                    onClose={() => setShowWeightResult(false)}
+                    currentWeight={weightResultData.currentWeight}
+                    previousWeight={weightResultData.previousWeight}
+                    startingWeight={weightResultData.startingWeight}
+                    goalWeight={weightResultData.goalWeight}
+                    history={weightResultData.history}
+                />
+            )}
         </View>
     );
 }
@@ -867,7 +1386,7 @@ const styles = StyleSheet.create({
     },
     goalLineDash: {
         height: 2,
-        backgroundColor: colors.textMuted,
+        backgroundColor: colors.success,
         opacity: 0.5,
     },
     xAxisLabels: {
@@ -1141,6 +1660,199 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     rangeValue: {
+        fontFamily: typography.body,
+        fontSize: 14,
+        color: colors.textSecondary,
+    },
+});
+
+// ── Glucose-specific styles ───────────────────────────────────────
+const gStyles = StyleSheet.create({
+    chartCard: {
+        backgroundColor: colors.surface,
+        borderRadius: 18,
+        padding: 12,
+        ...shadows.card,
+    },
+    chartRow: {
+        flexDirection: 'row',
+    },
+    yAxis: {
+        width: 28,
+        justifyContent: 'space-between',
+        paddingRight: 4,
+    },
+    yLabel: {
+        fontFamily: typography.body,
+        fontSize: 11,
+        color: colors.textMuted,
+        textAlign: 'right',
+    },
+    chartScroll: {
+        flex: 1,
+    },
+    chartArea: {
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: 8,
+    },
+    zoneBand: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+    },
+    gridLineThin: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: 'rgba(0,0,0,0.06)',
+    },
+    zoneLine: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        height: 1,
+        borderTopWidth: 1,
+        borderStyle: 'dashed',
+        borderColor: 'rgba(0,0,0,0.08)',
+    },
+    dot: {
+        position: 'absolute',
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        borderWidth: 2,
+        borderColor: '#fff',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.15,
+        shadowRadius: 2,
+        elevation: 3,
+    },
+    xAxisRow: {
+        position: 'absolute',
+        bottom: -20,
+        left: 0,
+        right: 0,
+        height: 20,
+    },
+    xLabel: {
+        position: 'absolute',
+        fontFamily: typography.body,
+        fontSize: 10,
+        color: colors.textMuted,
+    },
+    filterIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: 10,
+        backgroundColor: colors.surfaceAlt,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginLeft: 8,
+    },
+    insightsCard: {
+        backgroundColor: colors.surface,
+        borderRadius: 18,
+        padding: 20,
+        ...shadows.card,
+    },
+    insightsTitle: {
+        fontFamily: typography.heading,
+        fontSize: 15,
+        color: colors.textPrimary,
+        marginBottom: 16,
+    },
+    insightsUnit: {
+        fontFamily: typography.body,
+        fontSize: 14,
+        color: colors.textSecondary,
+    },
+    readingsCount: {
+        fontFamily: typography.body,
+        fontSize: 14,
+        color: colors.textPrimary,
+        textAlign: 'center',
+        marginTop: 12,
+    },
+    inRangeText: {
+        fontFamily: typography.body,
+        fontSize: 14,
+        color: colors.textSecondary,
+        textAlign: 'center',
+        marginTop: 4,
+    },
+    zoneIndicator: {
+        width: 4,
+        height: 28,
+        borderRadius: 2,
+    },
+    mealBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceAlt,
+    },
+    mealBadgeText: {
+        fontFamily: typography.body,
+        fontSize: 12,
+        color: colors.textSecondary,
+    },
+    zonesCard: {
+        backgroundColor: colors.surface,
+        borderRadius: 18,
+        padding: 20,
+        ...shadows.card,
+    },
+    zonesHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    zonesTitle: {
+        fontFamily: typography.heading,
+        fontSize: 15,
+        color: colors.textPrimary,
+    },
+    zonesBody: {
+        marginTop: 16,
+    },
+    zonesTableHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingBottom: 8,
+    },
+    zonesHeaderLabel: {
+        fontFamily: typography.body,
+        fontSize: 13,
+        color: colors.textMuted,
+    },
+    zonesHeaderValue: {
+        fontFamily: typography.body,
+        fontSize: 13,
+        color: colors.textMuted,
+    },
+    zonesDivider: {
+        height: 1,
+        backgroundColor: colors.border,
+        marginBottom: 12,
+    },
+    zoneRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 8,
+        gap: 12,
+    },
+    zoneLabel: {
+        fontFamily: typography.body,
+        fontSize: 14,
+        color: colors.textPrimary,
+        flex: 1,
+    },
+    zoneRange: {
         fontFamily: typography.body,
         fontSize: 14,
         color: colors.textSecondary,

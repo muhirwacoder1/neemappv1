@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "333411713540",
+    "project_id": "neem-app-e042d",
+    "storage_bucket": "neem-app-e042d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:333411713540:android:a1663663f360771fd52b51",
+        "android_client_info": {
+          "package_name": "com.neemapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "333411713540-2hoi454ompouqis1t4o2b1t2ik9pjdb4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBBJrp_R38ya-fChnf3gCFm-BVcFJdQtkw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "333411713540-2hoi454ompouqis1t4o2b1t2ik9pjdb4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

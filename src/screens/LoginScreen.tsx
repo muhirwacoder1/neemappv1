@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
+    ActivityIndicator,
+    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -15,6 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import { RootStackParamList } from '../navigation/types';
 import { typography } from '../theme/typography';
 import { PressableScale } from '../components/PressableScale';
+import { signIn, resetPassword, signInWithGoogle, signInWithApple } from '../services/auth';
 
 // ── Colors ─────────────────────────────────────────────────────
 const C = {
@@ -37,10 +40,69 @@ export function LoginScreen({ navigation }: Props) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    const [loading, setLoading] = useState(false);
 
-    const handleLogin = () => {
-        // TODO: integrate real auth
-        navigation.replace('Main');
+    const handleGoogleSignIn = async () => {
+        setLoading(true);
+        try {
+            await signInWithGoogle();
+        } catch (err: any) {
+            if (err.code !== 'SIGN_IN_CANCELLED') {
+                Alert.alert('Google Sign-In Failed', err.message);
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleAppleSignIn = async () => {
+        setLoading(true);
+        try {
+            await signInWithApple();
+        } catch (err: any) {
+            if (err.code !== 'ERR_REQUEST_CANCELED') {
+                Alert.alert('Apple Sign-In Failed', err.message);
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleLogin = async () => {
+        if (!email.trim() || !password.trim()) {
+            Alert.alert('Missing fields', 'Please enter your email and password.');
+            return;
+        }
+        setLoading(true);
+        try {
+            await signIn(email.trim(), password);
+            // Auth state change in AuthContext handles navigation automatically
+        } catch (err: any) {
+            const msg =
+                err.code === 'auth/invalid-credential'
+                    ? 'Invalid email or password.'
+                    : err.code === 'auth/user-not-found'
+                        ? 'No account found with this email.'
+                        : err.code === 'auth/too-many-requests'
+                            ? 'Too many attempts. Please try again later.'
+                            : err.message || 'Login failed. Please try again.';
+            Alert.alert('Login Failed', msg);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleForgotPassword = async () => {
+        if (!email.trim()) {
+            Alert.alert('Enter your email', 'Type your email above, then tap "Forgot your password?"');
+            return;
+        }
+        try {
+            await resetPassword(email.trim());
+            Alert.alert('Email Sent', 'Check your inbox for a password reset link.');
+        } catch {
+            Alert.alert('Error', 'Could not send reset email. Check the address.');
+        }
     };
 
     return (
@@ -102,13 +164,21 @@ export function LoginScreen({ navigation }: Props) {
                     </View>
 
                     {/* Forgot password */}
-                    <PressableScale style={styles.forgotRow}>
+                    <PressableScale style={styles.forgotRow} onPress={handleForgotPassword}>
                         <Text style={styles.forgotText}>Forgot your password?</Text>
                     </PressableScale>
 
                     {/* Login Button */}
-                    <PressableScale style={styles.loginButton} onPress={handleLogin}>
-                        <Text style={styles.loginButtonText}>Log in</Text>
+                    <PressableScale
+                        style={[styles.loginButton, loading && { opacity: 0.7 }]}
+                        onPress={handleLogin}
+                        disabled={loading}
+                    >
+                        {loading ? (
+                            <ActivityIndicator color="#FFFFFF" />
+                        ) : (
+                            <Text style={styles.loginButtonText}>Log in</Text>
+                        )}
                     </PressableScale>
 
                     {/* OR separator */}
@@ -119,19 +189,21 @@ export function LoginScreen({ navigation }: Props) {
                     </View>
 
                     {/* Social Buttons */}
-                    <PressableScale style={styles.socialButton}>
+                    <PressableScale style={styles.socialButton} onPress={handleGoogleSignIn} disabled={loading}>
                         <View style={styles.socialIconWrap}>
                             <Text style={{ fontSize: 20 }}>G</Text>
                         </View>
                         <Text style={styles.socialButtonText}>Continue with Google</Text>
                     </PressableScale>
 
-                    <PressableScale style={styles.socialButton}>
-                        <View style={styles.socialIconWrap}>
-                            <MaterialCommunityIcons name="apple" size={22} color={C.black} />
-                        </View>
-                        <Text style={styles.socialButtonText}>Continue with Apple</Text>
-                    </PressableScale>
+                    {Platform.OS === 'ios' && (
+                        <PressableScale style={styles.socialButton} onPress={handleAppleSignIn} disabled={loading}>
+                            <View style={styles.socialIconWrap}>
+                                <MaterialCommunityIcons name="apple" size={22} color={C.black} />
+                            </View>
+                            <Text style={styles.socialButtonText}>Continue with Apple</Text>
+                        </PressableScale>
+                    )}
                 </ScrollView>
             </KeyboardAvoidingView>
         </View>

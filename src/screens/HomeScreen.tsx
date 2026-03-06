@@ -1,18 +1,21 @@
-import { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View, Modal, Dimensions } from 'react-native';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View, Modal, Dimensions, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Alert } from 'react-native';
+import { useAuth } from '../context/AuthContext';
+import { addGlucoseReading, addWeightReading, addBloodPressure, addWaterIntake, getLatestReading, GlucoseReading, WeightReading, BloodPressureReading } from '../services/healthData';
+import { Timestamp } from 'firebase/firestore';
 import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { spacing } from '../theme/spacing';
 import { shadows } from '../theme/shadows';
 import { PressableScale } from '../components/PressableScale';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { StreakBadge } from '../components/StreakBadge';
 import { DailyGoalItem } from '../components/DailyGoalItem';
 import { ResourceCard } from '../components/ResourceCard';
 import { CircularProgress } from '../components/CircularProgress';
@@ -98,25 +101,100 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 export function HomeScreen() {
     const navigation = useNavigation<NavigationProp>();
     const insets = useSafeAreaInsets();
+    const { user } = useAuth();
     const [activeHeroIndex, setActiveHeroIndex] = useState(0);
     const [showCalorieModal, setShowCalorieModal] = useState(false);
     const [showGlucoseModal, setShowGlucoseModal] = useState(false);
     const [showWeightModal, setShowWeightModal] = useState(false);
     const [showBloodPressureModal, setShowBloodPressureModal] = useState(false);
     const [showWaterModal, setShowWaterModal] = useState(false);
+    const heroScrollRef = useRef<ScrollView>(null);
+    const heroTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const flamePulse = useRef(new Animated.Value(1)).current;
 
-    // Mock data
+    // Health data from Firestore
+    const [latestGlucose, setLatestGlucose] = useState<GlucoseReading | null>(null);
+    const [latestWeight, setLatestWeight] = useState<WeightReading | null>(null);
+    const [latestBP, setLatestBP] = useState<BloodPressureReading | null>(null);
+
     const streakDays = 0;
-    const glucoseValue = 120;
-    const weightValue = 250;
     const caloriesLeft = 2275;
     const caloriesEaten = 0;
     const caloriesBurned = 0;
 
-    const handleHeroScroll = (event: any) => {
-        const index = Math.round(event.nativeEvent.contentOffset.x / (screenWidth - 32));
-        setActiveHeroIndex(index);
+    // Format Firestore Timestamp to readable date
+    const formatDate = (ts: Timestamp | undefined) => {
+        if (!ts) return '';
+        const d = ts.toDate();
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${months[d.getMonth()]} ${d.getDate()}`;
     };
+
+    // Fetch latest readings from Firestore
+    const fetchLatestReadings = useCallback(async () => {
+        if (!user) return;
+        try {
+            const [glucose, weight, bp] = await Promise.all([
+                getLatestReading(user.uid, 'glucose'),
+                getLatestReading(user.uid, 'weight'),
+                getLatestReading(user.uid, 'bloodPressure'),
+            ]);
+            setLatestGlucose(glucose as GlucoseReading | null);
+            setLatestWeight(weight as WeightReading | null);
+            setLatestBP(bp as BloodPressureReading | null);
+        } catch (err) {
+            console.warn('Failed to fetch latest readings:', err);
+        }
+    }, [user]);
+
+    // Fetch on mount and when user changes
+    useEffect(() => {
+        fetchLatestReadings();
+    }, [fetchLatestReadings]);
+
+    // Auto-scroll hero carousel every 3 seconds
+    useEffect(() => {
+        heroTimerRef.current = setInterval(() => {
+            setActiveHeroIndex(prev => {
+                const next = (prev + 1) % heroCards.length;
+                heroScrollRef.current?.scrollTo({
+                    x: next * (screenWidth - 32 + SECTION_GAP),
+                    animated: true,
+                });
+                return next;
+            });
+        }, 3000);
+        return () => {
+            if (heroTimerRef.current) clearInterval(heroTimerRef.current);
+        };
+    }, []);
+
+    // Flame pulse animation
+    useEffect(() => {
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(flamePulse, { toValue: 1.2, duration: 800, useNativeDriver: true }),
+                Animated.timing(flamePulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+            ]),
+        ).start();
+    }, []);
+
+    const handleHeroScroll = useCallback((event: any) => {
+        const index = Math.round(event.nativeEvent.contentOffset.x / (screenWidth - 32 + SECTION_GAP));
+        setActiveHeroIndex(index);
+        // Reset timer on manual scroll
+        if (heroTimerRef.current) clearInterval(heroTimerRef.current);
+        heroTimerRef.current = setInterval(() => {
+            setActiveHeroIndex(prev => {
+                const next = (prev + 1) % heroCards.length;
+                heroScrollRef.current?.scrollTo({
+                    x: next * (screenWidth - 32 + SECTION_GAP),
+                    animated: true,
+                });
+                return next;
+            });
+        }, 3000);
+    }, []);
 
     return (
         <ScrollView
@@ -125,11 +203,23 @@ export function HomeScreen() {
             showsVerticalScrollIndicator={false}
         >
             {/* Header */}
-            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+            <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
                 <View style={styles.headerTop}>
                     <View style={styles.headerLeft}>
                         <Text style={styles.greeting}>Howdy, Alex</Text>
                         <Text style={styles.subGreeting}>Have a nutritious day!</Text>
+                        {/* Streak Badge */}
+                        <View style={styles.streakBadge}>
+                            <LinearGradient
+                                colors={['#FF6B35', '#FF4500']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                                style={styles.streakGradient}
+                            >
+                                <Animated.Text style={[styles.streakFlame, { transform: [{ scale: flamePulse }] }]}>🔥</Animated.Text>
+                                <Text style={styles.streakText}>{streakDays} day streak</Text>
+                            </LinearGradient>
+                        </View>
                     </View>
                     <View style={styles.headerIcons}>
                         <PressableScale
@@ -146,13 +236,11 @@ export function HomeScreen() {
                         </PressableScale>
                     </View>
                 </View>
-                <View style={styles.streakContainer}>
-                    <StreakBadge days={streakDays} />
-                </View>
             </View>
 
             {/* Hero Carousel */}
             <ScrollView
+                ref={heroScrollRef}
                 horizontal
                 pagingEnabled
                 showsHorizontalScrollIndicator={false}
@@ -203,12 +291,21 @@ export function HomeScreen() {
                     <AddButton onPress={() => setShowGlucoseModal(true)} />
                     <View style={styles.cardContent}>
                         <Text style={styles.cardTitle}>Glucose</Text>
-                        <View style={styles.valueRow}>
-                            <View style={styles.statusDot} />
-                            <Text style={styles.valueText}>{glucoseValue}</Text>
-                            <Text style={styles.unitText}>mmol/L</Text>
-                        </View>
-                        <Text style={styles.dateText}>Jan 17</Text>
+                        {latestGlucose ? (
+                            <>
+                                <View style={styles.valueRow}>
+                                    <View style={styles.statusDot} />
+                                    <Text style={styles.valueText}>{latestGlucose.value}</Text>
+                                    <Text style={styles.unitText}>{latestGlucose.unit || 'mg/dL'}</Text>
+                                </View>
+                                <Text style={styles.dateText}>{formatDate(latestGlucose.timestamp)}</Text>
+                            </>
+                        ) : (
+                            <>
+                                <Text style={styles.valueTextMuted}>—</Text>
+                                <Text style={styles.dateText}>No data</Text>
+                            </>
+                        )}
                     </View>
                 </View>
 
@@ -222,11 +319,20 @@ export function HomeScreen() {
                     <AddButton onPress={() => setShowWeightModal(true)} />
                     <View style={styles.cardContent}>
                         <Text style={styles.cardTitle}>Weight</Text>
-                        <View style={styles.valueRow}>
-                            <Text style={styles.valueText}>{weightValue}</Text>
-                            <Text style={styles.unitText}>kg</Text>
-                        </View>
-                        <Text style={styles.dateText}>Jan 16</Text>
+                        {latestWeight ? (
+                            <>
+                                <View style={styles.valueRow}>
+                                    <Text style={styles.valueText}>{latestWeight.kg}</Text>
+                                    <Text style={styles.unitText}>kg</Text>
+                                </View>
+                                <Text style={styles.dateText}>{formatDate(latestWeight.timestamp)}</Text>
+                            </>
+                        ) : (
+                            <>
+                                <Text style={styles.valueTextMuted}>—</Text>
+                                <Text style={styles.dateText}>No data</Text>
+                            </>
+                        )}
                     </View>
                 </View>
             </View>
@@ -243,12 +349,25 @@ export function HomeScreen() {
                     <AddButton onPress={() => setShowBloodPressureModal(true)} />
                     <View style={styles.cardContent}>
                         <Text style={styles.cardTitle}>Blood pressure</Text>
-                        <Text style={styles.valueTextMuted}>—</Text>
-                        <Text style={styles.dateText}>No data</Text>
+                        {latestBP ? (
+                            <>
+                                <View style={styles.valueRow}>
+                                    <Text style={styles.valueText}>{latestBP.systolic}/{latestBP.diastolic}</Text>
+                                    <Text style={styles.unitText}>mmHg</Text>
+                                </View>
+                                <Text style={styles.dateText}>{formatDate(latestBP.timestamp)}</Text>
+                            </>
+                        ) : (
+                            <>
+                                <Text style={styles.valueTextMuted}>—</Text>
+                                <Text style={styles.dateText}>No data</Text>
+                            </>
+                        )}
                     </View>
                 </View>
 
                 <View style={styles.metricCard}>
+                    <Pressable onPress={() => navigation.navigate('MedicationList')} style={StyleSheet.absoluteFill} />
                     {/* Icon LEFT corner - add medication.svg for Medication */}
                     <View style={styles.cardIconLeft}>
                         <AddMedicationIcon width={48} height={48} />
@@ -259,10 +378,10 @@ export function HomeScreen() {
                         <Text style={styles.cardTitle}>Medication</Text>
                         <View style={styles.medicationInfo}>
                             <PillsIcon width={20} height={20} />
-                            <Text style={styles.medicationText}>2 of 3 taken today</Text>
+                            <Text style={styles.medicationText}>Tap to view</Text>
                         </View>
-                        <PressableScale style={styles.linkBtn} onPress={() => navigation.navigate('AddMedication')}>
-                            <Text style={styles.linkBtnText}>Add medication</Text>
+                        <PressableScale style={styles.linkBtn} onPress={() => navigation.navigate('MedicationList')}>
+                            <Text style={styles.linkBtnText}>View medications</Text>
                         </PressableScale>
                     </View>
                 </View>
@@ -418,6 +537,16 @@ export function HomeScreen() {
             <LogGlucoseModal
                 visible={showGlucoseModal}
                 onClose={() => setShowGlucoseModal(false)}
+                onSave={async (value, mealTiming) => {
+                    if (!user) return;
+                    try {
+                        await addGlucoseReading(user.uid, value, 'mg/dL', mealTiming);
+                        setShowGlucoseModal(false);
+                        fetchLatestReadings();
+                    } catch (e: any) {
+                        Alert.alert('Error', e.message);
+                    }
+                }}
             />
 
             {/* Add Weight Modal */}
@@ -425,19 +554,48 @@ export function HomeScreen() {
                 visible={showWeightModal}
                 onClose={() => setShowWeightModal(false)}
                 initialKg={70}
+                onSave={async (kg, grams) => {
+                    if (!user) return;
+                    try {
+                        await addWeightReading(user.uid, kg, grams);
+                        setShowWeightModal(false);
+                        fetchLatestReadings();
+                    } catch (e: any) {
+                        Alert.alert('Error', e.message);
+                    }
+                }}
             />
 
             {/* Add Blood Pressure Modal */}
             <AddBloodPressureModal
                 visible={showBloodPressureModal}
                 onClose={() => setShowBloodPressureModal(false)}
+                onSave={async (systolic, diastolic) => {
+                    if (!user) return;
+                    try {
+                        await addBloodPressure(user.uid, systolic, diastolic);
+                        setShowBloodPressureModal(false);
+                        fetchLatestReadings();
+                    } catch (e: any) {
+                        Alert.alert('Error', e.message);
+                    }
+                }}
             />
 
             {/* Log Water Modal */}
             <LogWaterModal
                 visible={showWaterModal}
                 onClose={() => setShowWaterModal(false)}
-                dailyGoal={1500}
+                dailyGoalL={1.5}
+                onSave={async (amountL) => {
+                    if (!user) return;
+                    try {
+                        await addWaterIntake(user.uid, amountL * 1000);
+                        setShowWaterModal(false);
+                    } catch (e: any) {
+                        Alert.alert('Error', e.message);
+                    }
+                }}
             />
         </ScrollView>
     );
@@ -458,7 +616,7 @@ const styles = StyleSheet.create({
     // Header - redesigned for premium feel
     header: {
         paddingHorizontal: 20,
-        paddingBottom: 8,
+        paddingBottom: 12,
     },
     headerTop: {
         flexDirection: 'row',
@@ -468,6 +626,7 @@ const styles = StyleSheet.create({
     headerLeft: {
         flex: 1,
         paddingRight: 16,
+        gap: 4,
     },
     greeting: {
         fontFamily: typography.heading,
@@ -476,15 +635,31 @@ const styles = StyleSheet.create({
         lineHeight: 32,
     },
     subGreeting: {
-        marginTop: 4,
         fontFamily: typography.body,
-        fontSize: 15,
+        fontSize: 14,
         color: colors.textSecondary,
         lineHeight: 20,
     },
-    streakContainer: {
-        marginTop: 14,
+    streakBadge: {
+        marginTop: 10,
         alignSelf: 'flex-start',
+    },
+    streakGradient: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 20,
+        gap: 6,
+    },
+    streakFlame: {
+        fontSize: 15,
+    },
+    streakText: {
+        fontFamily: typography.subheading,
+        fontSize: 13,
+        color: '#FFFFFF',
+        letterSpacing: 0.3,
     },
     headerIcons: {
         flexDirection: 'row',
@@ -494,8 +669,8 @@ const styles = StyleSheet.create({
     iconButton: {
         width: ICON_BUTTON_SIZE,
         height: ICON_BUTTON_SIZE,
-        borderRadius: 14,
-        backgroundColor: '#3C3C43',
+        borderRadius: ICON_BUTTON_SIZE / 2,
+        backgroundColor: 'rgba(60, 60, 67, 0.85)',
         alignItems: 'center',
         justifyContent: 'center',
     },

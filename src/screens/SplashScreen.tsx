@@ -1,16 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { RootStackParamList } from '../navigation/types';
 import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'Splash'>;
-
-export function SplashScreen({ navigation }: Props) {
+export function SplashScreen() {
   const opacity = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.96)).current;
 
@@ -28,13 +24,7 @@ export function SplashScreen({ navigation }: Props) {
         useNativeDriver: true,
       }),
     ]).start();
-
-    const timeout = setTimeout(() => {
-      navigation.replace('Welcome');
-    }, 1400);
-
-    return () => clearTimeout(timeout);
-  }, [navigation, opacity, scale]);
+  }, [opacity, scale]);
 
   return (
     <LinearGradient colors={[colors.primary, colors.primaryDark]} style={styles.container}>

@@ -2,6 +2,7 @@
   "expo": {
     "name": "diabetes-care-app",
     "slug": "diabetes-care-app",
+    "scheme": "neem-diabetes",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -13,9 +14,12 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.neemapp"
     },
     "android": {
+      "package": "com.neemapp",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -27,7 +31,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-font"
-    ]
+      "expo-font",
+      "@react-native-google-signin/google-signin"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "330041c5-bc77-4ab5-adb1-8a9cd1ab23a1"
+      }
+    }
   }
 }

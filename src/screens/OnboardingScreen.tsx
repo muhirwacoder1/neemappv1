@@ -13,9 +13,12 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import { doc, updateDoc } from 'firebase/firestore';
 import { RootStackParamList } from '../navigation/types';
 import { typography } from '../theme/typography';
 import { PressableScale } from '../components/PressableScale';
+import { useAuth } from '../context/AuthContext';
+import { db } from '../config/firebase';
 
 const TOTAL_STEPS = 15;
 
@@ -218,18 +221,6 @@ const STEPS: StepConfig[] = [
   },
 ];
 
-// ── Picker constants ──────────────────────────────────────────
-const PICKER_ITEM_HEIGHT = 44;
-const PICKER_VISIBLE_ITEMS = 7;
-const PICKER_HEIGHT = PICKER_ITEM_HEIGHT * PICKER_VISIBLE_ITEMS;
-
-// ── Helpers ───────────────────────────────────────────────────
-function inchesToFeetStr(totalInches: number): string {
-  const feet = Math.floor(totalInches / 12);
-  const inches = totalInches % 12;
-  return `${feet}'${inches}"`;
-}
-
 // ══════════════════════════════════════════════════════════════════
 // ONBOARDING SCREEN
 // ══════════════════════════════════════════════════════════════════
@@ -262,14 +253,21 @@ export function OnboardingScreen({ navigation }: Props) {
     return stepNum / TOTAL_STEPS;
   })();
 
-  const goNext = useCallback(() => {
+  const { user } = useAuth();
+
+  const goNext = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (currentStep < STEPS.length - 1) {
       setCurrentStep(currentStep + 1);
     } else {
-      navigation.replace('Auth');
+      // Mark onboarding complete in Firestore — navigation happens automatically
+      if (user) {
+        await updateDoc(doc(db, 'users', user.uid), {
+          onboardingComplete: true,
+        });
+      }
     }
-  }, [currentStep, navigation]);
+  }, [currentStep, user]);
 
   const handleSelect = useCallback((optionId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -525,8 +523,20 @@ export function OnboardingScreen({ navigation }: Props) {
   );
 }
 
+// ── Picker constants ──────────────────────────────────────────
+const PICKER_ITEM_HEIGHT = 52;
+const PICKER_VISIBLE_ITEMS = 5;
+const PICKER_HEIGHT = PICKER_ITEM_HEIGHT * PICKER_VISIBLE_ITEMS;
+
+// ── Helpers ───────────────────────────────────────────────────
+function inchesToFeetStr(totalInches: number): string {
+  const ft = Math.floor(totalInches / 12);
+  const inch = totalInches % 12;
+  return `${ft}'${inch}"`;
+}
+
 // ══════════════════════════════════════════════════════════════════
-// SCROLL PICKER WHEEL (FlatList-based for performance)
+// SCROLL PICKER WHEEL — Premium center-aligned design
 // ══════════════════════════════════════════════════════════════════
 function ScrollPickerWheel({
   min,
@@ -543,10 +553,9 @@ function ScrollPickerWheel({
 }) {
   const listRef = useRef<FlatList<number>>(null);
   const totalItems = max - min + 1;
-  const paddingItems = Math.floor(PICKER_VISIBLE_ITEMS / 2);
+  const paddingItems = Math.floor(PICKER_VISIBLE_ITEMS / 2); // 2 items padding above & below
   const lastValue = useRef(value);
   const [centerIndex, setCenterIndex] = useState(value - min);
-  const [containerHeight, setContainerHeight] = useState(PICKER_HEIGHT);
 
   // Items array — only create once
   const items = useRef(Array.from({ length: totalItems }, (_, i) => min + i)).current;
@@ -593,13 +602,11 @@ function ScrollPickerWheel({
 
   const label = formatLabel || String;
 
-  // Highlight bar Y position (centered in container)
-  const highlightTop = (containerHeight - PICKER_ITEM_HEIGHT) / 2;
-
   const renderItem = useCallback(({ item, index }: { item: number; index: number }) => {
     const distance = Math.abs(index - centerIndex);
     const isCenter = distance === 0;
-    const opacity = isCenter ? 1 : distance === 1 ? 0.55 : distance === 2 ? 0.35 : 0.2;
+    const opacity = isCenter ? 1 : distance === 1 ? 0.4 : distance === 2 ? 0.18 : 0.08;
+    const scale = isCenter ? 1 : distance === 1 ? 0.88 : 0.78;
 
     return (
       <View style={pStyles.item}>
@@ -607,7 +614,7 @@ function ScrollPickerWheel({
           style={[
             pStyles.itemText,
             isCenter && pStyles.itemTextSelected,
-            { opacity },
+            { opacity, transform: [{ scale }] },
           ]}
         >
           {label(item)}
@@ -624,13 +631,14 @@ function ScrollPickerWheel({
     index,
   }), []);
 
+  // Center indicator line Y position
+  const indicatorTop = (PICKER_HEIGHT - PICKER_ITEM_HEIGHT) / 2;
+
   return (
-    <View
-      style={pStyles.container}
-      onLayout={(e) => setContainerHeight(e.nativeEvent.layout.height)}
-    >
-      {/* Highlight bar behind center item */}
-      <View style={[pStyles.highlightBar, { top: highlightTop }]} />
+    <View style={pStyles.container}>
+      {/* Center selection indicator — two lines */}
+      <View style={[pStyles.indicatorLine, { top: indicatorTop }]} />
+      <View style={[pStyles.indicatorLine, { top: indicatorTop + PICKER_ITEM_HEIGHT }]} />
 
       <FlatList
         ref={listRef}
@@ -649,7 +657,7 @@ function ScrollPickerWheel({
           paddingTop: paddingItems * PICKER_ITEM_HEIGHT,
           paddingBottom: paddingItems * PICKER_ITEM_HEIGHT,
         }}
-        style={{ height: containerHeight }}
+        style={{ height: PICKER_HEIGHT }}
         initialScrollIndex={Math.max(0, value - min)}
         windowSize={5}
         maxToRenderPerBatch={15}
@@ -665,15 +673,15 @@ const pStyles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
+    overflow: 'hidden',
   },
-  highlightBar: {
+  indicatorLine: {
     position: 'absolute',
-    left: 16,
-    right: 16,
-    height: PICKER_ITEM_HEIGHT,
-    backgroundColor: '#EBEDF0',
-    borderRadius: 12,
-    zIndex: 0,
+    left: 40,
+    right: 40,
+    height: 1.5,
+    backgroundColor: '#D0D5DD',
+    zIndex: 1,
   },
   item: {
     height: PICKER_ITEM_HEIGHT,
@@ -682,12 +690,12 @@ const pStyles = StyleSheet.create({
   },
   itemText: {
     fontFamily: typography.body,
-    fontSize: 20,
-    color: C.gray,
+    fontSize: 22,
+    color: '#9DA4AE',
   },
   itemTextSelected: {
     fontFamily: typography.heading,
-    fontSize: 22,
+    fontSize: 28,
     color: C.black,
   },
 });
@@ -723,14 +731,14 @@ const styles = StyleSheet.create({
 
   // ── Progress ──────────────────────────────
   progressTrack: {
-    height: 3,
+    height: 5,
     backgroundColor: C.border,
+    borderRadius: 3,
   },
   progressFill: {
-    height: 3,
+    height: 5,
     backgroundColor: C.blue,
-    borderTopRightRadius: 2,
-    borderBottomRightRadius: 2,
+    borderRadius: 3,
   },
 
   // ── Content ───────────────────────────────
@@ -835,18 +843,26 @@ const styles = StyleSheet.create({
   // ── Toggle ────────────────────────────────
   toggleRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: -8,
-    marginBottom: 8,
+    backgroundColor: '#F2F4F7',
+    borderRadius: 28,
+    padding: 4,
+    marginTop: -4,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
   },
   toggleBtn: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: C.toggleInactiveBg,
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 24,
+    backgroundColor: 'transparent',
   },
   toggleBtnActive: {
     backgroundColor: C.blue,
+    shadowColor: C.blue,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
   },
   toggleBtnText: {
     fontFamily: typography.subheading,
@@ -862,15 +878,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     backgroundColor: C.bg,
-    borderTopWidth: 1,
-    borderTopColor: C.border,
   },
   nextButton: {
-    backgroundColor: C.black,
-    borderRadius: 30,
+    backgroundColor: '#2563EB',
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 18,
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 6,
   },
   nextButtonDisabled: {
     opacity: 0.35,

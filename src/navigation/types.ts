@@ -11,6 +11,7 @@ export type RootStackParamList = {
   HealthOverview: undefined;
   HealthInsights: { metric: MetricType };
   AddMedication: undefined;
+  MedicationList: undefined;
   DailyStretch: undefined;
   AddActivity: undefined;
   LearningHub: undefined;
